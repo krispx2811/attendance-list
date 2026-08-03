@@ -31,6 +31,24 @@ KIND_WALKIN = "walkin"
 
 BACKUPS_TO_KEEP = 14
 
+#: Employees a brand-new database starts with, so a fresh install is ready to
+#: use immediately. Names are stored exactly as written — capitalisation of a
+#: person's own name is not ours to correct.
+DEFAULT_EMPLOYEES = (
+    "Kareem",
+    "Hana",
+    "Marwa",
+    "Sara ahmed al balushi",
+    "Sara al balushi",
+    "Ibad",
+    "Khuloud",
+    "Laila",
+    "Ruqiaya",
+    "Hamood",
+    "Mohammad",
+    "Fatma",
+)
+
 _conn: Optional[sqlite3.Connection] = None
 
 
@@ -197,6 +215,26 @@ def list_people(
 
 def get_person(person_id: int) -> Optional[sqlite3.Row]:
     return connect().execute("SELECT * FROM people WHERE id = ?", (person_id,)).fetchone()
+
+
+def seed_default_people() -> int:
+    """Fill a brand-new database with :data:`DEFAULT_EMPLOYEES`.
+
+    Only ever runs when there are no people at all. Seeding on any other
+    condition would resurrect names the user had deliberately removed.
+    """
+    conn = connect()
+    if conn.execute("SELECT COUNT(*) AS n FROM people").fetchone()["n"]:
+        return 0
+
+    added = 0
+    for name in DEFAULT_EMPLOYEES:
+        try:
+            add_person(name, kind=KIND_ROSTER)
+            added += 1
+        except ValueError:
+            continue
+    return added
 
 
 # --------------------------------------------------------------------------

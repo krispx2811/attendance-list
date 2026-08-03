@@ -12,6 +12,7 @@ def main() -> int:
     paths.ensure_dirs()
     paths.adopt_legacy_database()  # carry over data from pre-1.0.1 installs
     db.connect()
+    db.seed_default_people()  # a fresh install starts ready to use
     db.backup_if_stale()
 
     from app.ui.app import AttendanceApp

@@ -159,6 +159,35 @@ class CoreTests(unittest.TestCase):
 
         self.assertEqual(self.db.known_reasons()[0], "Sick")
 
+    # -- default employees -----------------------------------------------
+    def test_a_new_database_is_seeded_with_the_default_employees(self):
+        added = self.db.seed_default_people()
+        self.assertEqual(added, len(self.db.DEFAULT_EMPLOYEES))
+
+        names = [p["name"] for p in self.db.list_people()]
+        for expected in self.db.DEFAULT_EMPLOYEES:
+            self.assertIn(expected, names)
+
+    def test_seeding_is_skipped_once_anyone_exists(self):
+        self.db.add_person("Only Me")
+        self.assertEqual(self.db.seed_default_people(), 0)
+        self.assertEqual([p["name"] for p in self.db.list_people()], ["Only Me"])
+
+    def test_seeding_does_not_resurrect_a_removed_default(self):
+        self.db.seed_default_people()
+        target = self.db.list_people()[0]
+        self.db.set_person_active(target["id"], False)
+
+        self.db.seed_default_people()  # e.g. after an app restart
+        active = [p["name"] for p in self.db.list_people()]
+        self.assertNotIn(target["name"], active)
+
+    def test_default_names_are_stored_exactly_as_written(self):
+        self.db.seed_default_people()
+        names = [p["name"] for p in self.db.list_people()]
+        self.assertIn("Sara ahmed al balushi", names)
+        self.assertIn("Sara al balushi", names)
+
     # -- deletion / backup -----------------------------------------------
     def test_deleting_a_person_cascades_to_their_records(self):
         pid = self.db.add_person("Mia")

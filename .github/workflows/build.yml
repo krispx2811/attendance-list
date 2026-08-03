@@ -54,8 +54,8 @@ jobs:
       - name: Verify the artifacts
         shell: pwsh
         run: |
-          $portable = "dist/Al araimi.exe"
-          $setup = Get-ChildItem dist -Filter "Al araimi-Setup-*.exe" | Select-Object -First 1
+          $portable = "dist/Al-araimi.exe"
+          $setup = Get-ChildItem dist -Filter "Al-araimi-Setup-*.exe" | Select-Object -First 1
           if (-not (Test-Path $portable)) { throw "portable exe was not produced" }
           if (-not $setup) { throw "installer was not produced" }
           "{0}: {1:N1} MB" -f $portable, ((Get-Item $portable).Length / 1MB)
@@ -69,7 +69,7 @@ jobs:
           # that throws on boot — failures that otherwise only show up on the
           # user's machine.
           $env:ATTENDANCE_DATA_DIR = "$env:RUNNER_TEMP\attendance-smoke"
-          $proc = Start-Process -FilePath "dist/Al araimi.exe" -PassThru
+          $proc = Start-Process -FilePath "dist/Al-araimi.exe" -PassThru
           Start-Sleep -Seconds 30
           if ($proc.HasExited) { throw "the app exited early with code $($proc.ExitCode)" }
           Get-Process -Name "Al araimi" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -77,13 +77,27 @@ jobs:
           if (-not (Test-Path $db)) { throw "the app did not create its database" }
           Write-Host "Smoke test passed: the window stayed open and the database was created."
 
+      - name: Check the updater will find the release asset
+        shell: pwsh
+        run: |
+          # latest.yml is what electron-updater fetches to locate the new
+          # build. GitHub rewrites spaces in asset names, so a filename with
+          # a space produces a latest.yml pointing at a file that 404s and
+          # auto-update silently stops working. Catch that here, not in the wild.
+          $yml = Get-Content dist/latest.yml -Raw
+          if ($yml -notmatch 'path:\s*(\S+)') { throw "latest.yml has no path entry" }
+          $named = $Matches[1]
+          if ($named -match '\s') { throw "latest.yml references '$named' which contains a space" }
+          if (-not (Test-Path "dist/$named")) { throw "latest.yml points at '$named' but no such file was built" }
+          Write-Host "Updater will look for '$named' — present in dist."
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: AttendanceList-windows
           path: |
-            dist/Al araimi.exe
-            dist/Al araimi-Setup-*.exe
+            dist/Al-araimi.exe
+            dist/Al-araimi-Setup-*.exe
           retention-days: 30
 
       - name: Publish release
@@ -91,18 +105,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/Al araimi.exe
-            dist/Al araimi-Setup-*.exe
+            dist/Al-araimi.exe
+            dist/Al-araimi-Setup-*.exe
             dist/latest.yml
           generate_release_notes: true
           body: |
             ## Attendance List ${{ github.ref_name }}
 
-            **Most people want `Al araimi-Setup-${{ github.ref_name }}.exe`** —
+            **Most people want `Al-araimi-Setup-${{ github.ref_name }}.exe`** —
             the installer. It adds a Start menu and desktop shortcut, and lets the
             app update itself from then on.
 
-            `Al araimi.exe` is the portable version: one file, no install,
+            `Al-araimi.exe` is the portable version: one file, no install,
             keeps its data in a `data` folder beside itself. Good for a USB stick.
 
             Windows shows a "Windows protected your PC" warning because the app is

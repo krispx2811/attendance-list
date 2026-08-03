@@ -1,6 +1,6 @@
 {
   "name": "attendance-list",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Daily attendance tracker — record who came, who didn't and why.",
   "main": "src/main/main.js",
   "author": "Kareem",
@@ -23,7 +23,7 @@
   },
   "build": {
     "appId": "com.kareem.attendancelist",
-    "productName": "AttendanceList",
+    "productName": "Al araimi",
     "copyright": "Copyright © 2026 Kareem",
     "directories": {
       "output": "dist",
@@ -52,10 +52,10 @@
         }
       ],
       "icon": "assets/icon.ico",
-      "artifactName": "AttendanceList-Setup-${version}.${ext}"
+      "artifactName": "Al araimi-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "AttendanceList.${ext}"
+      "artifactName": "Al araimi.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -63,7 +63,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Attendance List"
+      "shortcutName": "Al araimi"
     },
     "mac": {
       "target": [

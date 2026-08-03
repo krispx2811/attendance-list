@@ -54,8 +54,8 @@ jobs:
       - name: Verify the artifacts
         shell: pwsh
         run: |
-          $portable = "dist/AttendanceList.exe"
-          $setup = Get-ChildItem dist -Filter "AttendanceList-Setup-*.exe" | Select-Object -First 1
+          $portable = "dist/Al araimi.exe"
+          $setup = Get-ChildItem dist -Filter "Al araimi-Setup-*.exe" | Select-Object -First 1
           if (-not (Test-Path $portable)) { throw "portable exe was not produced" }
           if (-not $setup) { throw "installer was not produced" }
           "{0}: {1:N1} MB" -f $portable, ((Get-Item $portable).Length / 1MB)
@@ -69,10 +69,10 @@ jobs:
           # that throws on boot — failures that otherwise only show up on the
           # user's machine.
           $env:ATTENDANCE_DATA_DIR = "$env:RUNNER_TEMP\attendance-smoke"
-          $proc = Start-Process -FilePath dist/AttendanceList.exe -PassThru
+          $proc = Start-Process -FilePath "dist/Al araimi.exe" -PassThru
           Start-Sleep -Seconds 30
           if ($proc.HasExited) { throw "the app exited early with code $($proc.ExitCode)" }
-          Get-Process -Name AttendanceList -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Process -Name "Al araimi" -ErrorAction SilentlyContinue | Stop-Process -Force
           $db = "$env:ATTENDANCE_DATA_DIR\attendance.db"
           if (-not (Test-Path $db)) { throw "the app did not create its database" }
           Write-Host "Smoke test passed: the window stayed open and the database was created."
@@ -82,8 +82,8 @@ jobs:
         with:
           name: AttendanceList-windows
           path: |
-            dist/AttendanceList.exe
-            dist/AttendanceList-Setup-*.exe
+            dist/Al araimi.exe
+            dist/Al araimi-Setup-*.exe
           retention-days: 30
 
       - name: Publish release
@@ -91,18 +91,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/AttendanceList.exe
-            dist/AttendanceList-Setup-*.exe
+            dist/Al araimi.exe
+            dist/Al araimi-Setup-*.exe
             dist/latest.yml
           generate_release_notes: true
           body: |
             ## Attendance List ${{ github.ref_name }}
 
-            **Most people want `AttendanceList-Setup-${{ github.ref_name }}.exe`** —
+            **Most people want `Al araimi-Setup-${{ github.ref_name }}.exe`** —
             the installer. It adds a Start menu and desktop shortcut, and lets the
             app update itself from then on.
 
-            `AttendanceList.exe` is the portable version: one file, no install,
+            `Al araimi.exe` is the portable version: one file, no install,
             keeps its data in a `data` folder beside itself. Good for a USB stick.
 
             Windows shows a "Windows protected your PC" warning because the app is

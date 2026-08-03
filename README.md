@@ -66,16 +66,27 @@ Attendance rate per person, the most common reasons for absence, and:
 
 ## Where your data is kept
 
+In a `data` folder right next to the app, so everything lives in one place you
+can see and copy:
+
 ```
-C:\Users\<you>\AppData\Local\AttendanceList\
+AttendanceList.exe
+data\
     attendance.db      all attendance records
     backups\           automatic daily backups (last 14 kept)
 ```
 
-Data never leaves the computer — the app only contacts GitHub to check for a
-new version. Updating the app never touches the database.
+Updating the app replaces `AttendanceList.exe` only — the `data` folder is
+never touched. Data never leaves the computer; the app contacts GitHub solely
+to check for a new version.
 
-**To move data to another PC**, copy `attendance.db` into the same folder there.
+**To move everything to another computer**, copy the whole folder.
+
+> If you put the app somewhere Windows will not let it write — `C:\Program
+> Files`, or a locked-down network share — it falls back to
+> `C:\Users\<you>\AppData\Local\AttendanceList\` automatically rather than
+> failing. Keeping the `.exe` somewhere like your Desktop or Documents avoids
+> this entirely.
 
 **To share one list across several PCs**, set the environment variable
 `ATTENDANCE_DATA_DIR` to a shared network folder on each machine. (Best with
@@ -93,6 +104,10 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python main.py
 ```
+
+**On a Mac**, double-click `run-on-mac.command` instead — it sets up the
+virtual environment on first run, then opens the app. It is the same
+application as the Windows build; only the packaging differs.
 
 Run the tests:
 

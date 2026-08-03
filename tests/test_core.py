@@ -222,6 +222,113 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(wb.sheetnames, ["Records", "Summary", "Reasons"])
 
 
+class PathTests(unittest.TestCase):
+    """The data folder sits beside the app unless that folder is read-only."""
+
+    def setUp(self):
+        from app import paths
+
+        self.paths = paths
+        os.environ.pop("ATTENDANCE_DATA_DIR", None)
+        paths._resolved_data_dir = None
+
+    def tearDown(self):
+        self.paths._resolved_data_dir = None
+        os.environ.pop("ATTENDANCE_DATA_DIR", None)
+
+    def test_data_lives_beside_the_app_by_default(self):
+        self.assertEqual(self.paths.data_dir(), self.paths.app_dir() / "data")
+        self.assertFalse(self.paths.using_fallback_location())
+
+    def test_env_override_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["ATTENDANCE_DATA_DIR"] = tmp
+            self.assertEqual(self.paths.data_dir(), Path(tmp))
+
+    def test_falls_back_when_the_app_folder_is_not_writable(self):
+        original = self.paths._is_writable
+        self.paths._is_writable = lambda _p: False
+        try:
+            self.paths._resolved_data_dir = None
+            self.assertEqual(self.paths.data_dir(), self.paths.user_data_dir())
+            self.assertTrue(self.paths.using_fallback_location())
+        finally:
+            self.paths._is_writable = original
+
+    def test_legacy_database_is_adopted_and_the_original_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            new_dir, legacy_dir = root / "new", root / "legacy"
+            new_dir.mkdir()
+            legacy_dir.mkdir()
+
+            # A legacy database with one identifiable row.
+            import sqlite3
+
+            legacy_db = legacy_dir / "attendance.db"
+            conn = sqlite3.connect(str(legacy_db))
+            conn.execute("CREATE TABLE marker (note TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('carried over')")
+            conn.commit()
+            conn.close()
+
+            original_dir, original_user = self.paths.data_dir, self.paths.user_data_dir
+            self.paths.data_dir = lambda: new_dir
+            self.paths.user_data_dir = lambda: legacy_dir
+            try:
+                adopted = self.paths.adopt_legacy_database()
+                self.assertIsNotNone(adopted)
+
+                conn = sqlite3.connect(str(new_dir / "attendance.db"))
+                note = conn.execute("SELECT note FROM marker").fetchone()[0]
+                conn.close()
+                self.assertEqual(note, "carried over")
+
+                # Original preserved under a new name, not deleted.
+                self.assertFalse(legacy_db.exists())
+                self.assertTrue((legacy_dir / "attendance.db.migrated").exists())
+
+                # Running again must not overwrite the live database.
+                self.assertIsNone(self.paths.adopt_legacy_database())
+            finally:
+                self.paths.data_dir = original_dir
+                self.paths.user_data_dir = original_user
+
+    def test_adoption_carries_rows_still_sitting_in_the_wal(self):
+        """A plain file copy would lose these; the backup API must not."""
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            new_dir, legacy_dir = root / "new", root / "legacy"
+            new_dir.mkdir()
+            legacy_dir.mkdir()
+
+            legacy_db = legacy_dir / "attendance.db"
+            conn = sqlite3.connect(str(legacy_db))
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("CREATE TABLE marker (note TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('written in wal mode')")
+            conn.commit()
+            # Deliberately leave the connection open so the -wal is not
+            # checkpointed into the main file, mimicking an app still running.
+
+            original_dir, original_user = self.paths.data_dir, self.paths.user_data_dir
+            self.paths.data_dir = lambda: new_dir
+            self.paths.user_data_dir = lambda: legacy_dir
+            try:
+                self.assertTrue(legacy_db.with_name("attendance.db-wal").exists())
+                self.assertIsNotNone(self.paths.adopt_legacy_database())
+
+                check = sqlite3.connect(str(new_dir / "attendance.db"))
+                note = check.execute("SELECT note FROM marker").fetchone()[0]
+                check.close()
+                self.assertEqual(note, "written in wal mode")
+            finally:
+                self.paths.data_dir = original_dir
+                self.paths.user_data_dir = original_user
+
+
 class VersionTests(unittest.TestCase):
     def test_version_comparison_handles_tags_and_suffixes(self):
         from app.version import version_tuple

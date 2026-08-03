@@ -10,6 +10,7 @@ def main() -> int:
     from app import db, paths
 
     paths.ensure_dirs()
+    paths.adopt_legacy_database()  # carry over data from pre-1.0.1 installs
     db.connect()
     db.backup_if_stale()
 

@@ -4,7 +4,7 @@ The GitHub release tag (e.g. ``v1.0.1``) is compared against this value to
 decide whether an update is available. Bump it in the same commit you tag.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 APP_NAME = "Attendance List"
 

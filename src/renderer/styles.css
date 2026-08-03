@@ -328,10 +328,22 @@ button {
    View scaffolding
    ========================================================================== */
 
+/* The view host must be a flex child that is allowed to shrink, not an
+   auto-height block. Without this it grows to its content, .view-body
+   believes it is already full height and so never scrolls, and .main clips
+   whatever does not fit. min-height:0 is the part that actually permits
+   shrinking below content size. */
+#views {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .view {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 

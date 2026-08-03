@@ -1,6 +1,6 @@
 {
   "name": "attendance-list",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Daily attendance tracker — record who came, who didn't and why.",
   "main": "src/main/main.js",
   "author": "Kareem",

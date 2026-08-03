@@ -6,3 +6,4 @@ npm-debug.log*
 *.tsbuildinfo
 exports/
 __pycache__/
+builds/

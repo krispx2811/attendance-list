@@ -107,7 +107,7 @@ class AttendanceApp(ctk.CTk):
         self.tabs = ctk.CTkTabview(self, anchor="nw")
         self.tabs.grid(row=2, column=0, sticky="nsew", padx=16, pady=(12, 8))
 
-        for name in ("Today", "Roster", "History", "Reports"):
+        for name in ("Today", "Employees", "History", "Reports"):
             self.tabs.add(name)
             self.tabs.tab(name).grid_columnconfigure(0, weight=1)
             self.tabs.tab(name).grid_rowconfigure(0, weight=1)
@@ -115,7 +115,7 @@ class AttendanceApp(ctk.CTk):
         self.today_tab = TodayTab(self.tabs.tab("Today"), self)
         self.today_tab.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        self.roster_tab = RosterTab(self.tabs.tab("Roster"), self)
+        self.roster_tab = RosterTab(self.tabs.tab("Employees"), self)
         self.roster_tab.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         self.history_tab = HistoryTab(self.tabs.tab("History"), self)
@@ -160,7 +160,7 @@ class AttendanceApp(ctk.CTk):
         current = self.tabs.get()
         if current == "Today":
             self.today_tab.reload()
-        elif current == "Roster":
+        elif current == "Employees":
             self.roster_tab.reload()
         elif current == "History":
             self.history_tab.reload()

@@ -1,4 +1,4 @@
-"""Manage the list of people.
+"""Manage the list of employees.
 
 Removing someone defaults to deactivation, not deletion: an ex-employee's
 past attendance is usually the thing you most need to keep.
@@ -16,8 +16,8 @@ from . import widgets
 
 class RosterTab(ctk.CTkFrame):
     COLUMNS = (
-        ("name", "Name", 260),
-        ("kind", "Type", 110),
+        ("name", "Name", 280),
+        ("kind", "Type", 120),
         ("state", "Status", 110),
         ("records", "Days recorded", 130),
     )
@@ -41,20 +41,32 @@ class RosterTab(ctk.CTkFrame):
     def _build_toolbar(self) -> None:
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        bar.grid_columnconfigure(2, weight=1)
+        bar.grid_columnconfigure(3, weight=1)
 
-        self.name_entry = ctk.CTkEntry(bar, placeholder_text="New person's name", width=260)
+        self.name_entry = ctk.CTkEntry(
+            bar, placeholder_text="New employee's name", width=240, height=34
+        )
         self.name_entry.grid(row=0, column=0, padx=(0, 8))
         self.name_entry.bind("<Return>", lambda _e: self._add())
 
-        ctk.CTkButton(bar, text="Add to roster", width=130, command=self._add).grid(
-            row=0, column=1
+        ctk.CTkButton(bar, text="Add", width=90, height=34, command=self._add).grid(
+            row=0, column=1, padx=(0, 8)
         )
 
+        ctk.CTkButton(
+            bar,
+            text="Add several at once",
+            width=170,
+            height=34,
+            fg_color="transparent",
+            border_width=1,
+            command=self._add_many,
+        ).grid(row=0, column=2, sticky="w")
+
         self.show_inactive = ctk.CTkCheckBox(
-            bar, text="Show removed people", command=self.reload
+            bar, text="Show removed", command=self.reload
         )
-        self.show_inactive.grid(row=0, column=3, sticky="e")
+        self.show_inactive.grid(row=0, column=4, sticky="e")
 
     def _build_actions(self) -> None:
         bar = ctk.CTkFrame(self, fg_color="transparent")
@@ -64,7 +76,7 @@ class RosterTab(ctk.CTkFrame):
             side="left", padx=(0, 8)
         )
         ctk.CTkButton(
-            bar, text="Make permanent", width=140, command=self._promote
+            bar, text="Guest → Employee", width=150, command=self._promote
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bar,
@@ -101,7 +113,7 @@ class RosterTab(ctk.CTkFrame):
             display.append(
                 [
                     person["name"],
-                    "Roster" if person["kind"] == db.KIND_ROSTER else "Walk-in",
+                    "Employee" if person["kind"] == db.KIND_ROSTER else "Guest",
                     "Active" if person["active"] else "Removed",
                     db.attendance_count(person["id"]),
                 ]
@@ -112,7 +124,7 @@ class RosterTab(ctk.CTkFrame):
             display,
             tags_for=lambda row, i: ["muted"] if row[2] == "Removed" else [],
         )
-        self.app.set_status(f"{len(people)} people listed")
+        self.app.set_status(f"{len(people)} employees listed")
 
     def _selected(self):
         selection = self.tree.selection()
@@ -143,6 +155,21 @@ class RosterTab(ctk.CTkFrame):
         self.reload()
         self.app.refresh_other_tabs(source="roster")
 
+    def _add_many(self) -> None:
+        widgets.BulkAddDialog(self, on_done=self._create_many)
+
+    def _create_many(self, names: list[str]) -> None:
+        added = 0
+        for name in names:
+            try:
+                db.add_person(name, kind=db.KIND_ROSTER)
+                added += 1
+            except ValueError:
+                continue
+        self.reload()
+        self.app.refresh_other_tabs(source="roster")
+        self.app.set_status(f"Added {added} employee{'s' if added != 1 else ''}")
+
     def _rename(self, _event=None) -> None:
         person = self._require_selection()
         if person is None:
@@ -165,7 +192,7 @@ class RosterTab(ctk.CTkFrame):
             return
         if person["kind"] == db.KIND_ROSTER:
             messagebox.showinfo(
-                "Already permanent", f"{person['name']} is already on the roster.", parent=self
+                "Already an employee", f"{person['name']} is already a permanent employee.", parent=self
             )
             return
         db.promote_to_roster(person["id"])

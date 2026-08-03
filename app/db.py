@@ -44,6 +44,7 @@ DEFAULT_EMPLOYEES = (
     "Khuloud",
     "Laila",
     "Ruqiaya",
+    "Jihad",
     "Hamood",
     "Mohammad",
     "Fatma",

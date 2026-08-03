@@ -1,0 +1,10 @@
+build/
+dist/
+__pycache__/
+*.py[cod]
+*.db
+*.db-journal
+.venv/
+venv/
+.DS_Store
+exports/

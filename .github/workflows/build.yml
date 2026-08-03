@@ -1,0 +1,105 @@
+name: Build Windows executable
+
+# Pushing a version tag builds the .exe and publishes it as a Release, which
+# is also the feed the app's auto-updater reads.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    name: Build Windows .exe
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller==6.19.0
+
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean AttendanceList.spec
+
+      - name: Verify the executable was produced
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/AttendanceList.exe)) {
+            throw "dist/AttendanceList.exe was not created"
+          }
+          $size = (Get-Item dist/AttendanceList.exe).Length / 1MB
+          Write-Host ("Built AttendanceList.exe ({0:N1} MB)" -f $size)
+          if ($size -lt 5) { throw "Executable is suspiciously small" }
+
+      - name: Smoke-test the executable
+        shell: pwsh
+        run: |
+          # Launch it briefly: catches missing CustomTkinter assets, which
+          # otherwise only surface on the user's machine.
+          $env:ATTENDANCE_DATA_DIR = "$env:RUNNER_TEMP\attendance-smoke"
+          $proc = Start-Process -FilePath dist/AttendanceList.exe -PassThru
+          Start-Sleep -Seconds 25
+          if ($proc.HasExited) {
+            Write-Host "Process exited early with code $($proc.ExitCode)"
+            $log = "$env:ATTENDANCE_DATA_DIR\app.log"
+            if (Test-Path $log) { Get-Content $log }
+            throw "The application failed to stay running"
+          }
+          Stop-Process -Id $proc.Id -Force
+          if (-not (Test-Path "$env:ATTENDANCE_DATA_DIR\attendance.db")) {
+            throw "The application did not create its database"
+          }
+          Write-Host "Smoke test passed: window stayed open and the database was created."
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AttendanceList-exe
+          path: dist/AttendanceList.exe
+          retention-days: 30
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/AttendanceList.exe
+          generate_release_notes: true
+          body: |
+            ## Attendance List ${{ github.ref_name }}
+
+            Download **AttendanceList.exe** below and run it. No installation needed.
+
+            Windows may show a "Windows protected your PC" warning because the app
+            is not code-signed — click **More info** then **Run anyway**.
+
+            If you already have an older version installed, you do not need this
+            page: the app offers the update itself the next time you open it.

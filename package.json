@@ -1,0 +1,81 @@
+{
+  "name": "attendance-list",
+  "version": "2.0.0",
+  "description": "Daily attendance tracker — record who came, who didn't and why.",
+  "main": "src/main/main.js",
+  "author": "Kareem",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node scripts/test.js",
+    "build": "electron-builder --win --publish never",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.2",
+    "electron-updater": "6.8.9",
+    "exceljs": "4.4.0"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.kareem.attendancelist",
+    "productName": "AttendanceList",
+    "copyright": "Copyright © 2026 Kareem",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/icon.ico",
+      "assets/icon.png",
+      "!**/*.map",
+      "!scripts/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "AttendanceList-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "AttendanceList.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Attendance List"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "krispx2811",
+      "repo": "attendance-list"
+    }
+  }
+}

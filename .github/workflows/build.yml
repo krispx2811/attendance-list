@@ -1,7 +1,7 @@
-name: Build Windows executable
+name: Build Windows app
 
-# Pushing a version tag builds the .exe and publishes it as a Release, which
-# is also the feed the app's auto-updater reads.
+# Pushing a version tag builds the installer and portable .exe and publishes
+# them as a Release, which is also the feed electron-updater reads.
 on:
   push:
     tags: ["v*"]
@@ -17,89 +17,96 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          node-version: "22"
+          cache: npm
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: npm ci
 
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        # xvfb because the runner spawns Electron's binary as its Node host.
+        run: xvfb-run --auto-servernum npm test
 
   build:
-    name: Build Windows .exe
+    name: Build Windows
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          node-version: "22"
+          cache: npm
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller==6.19.0
+        run: npm ci
 
-      - name: Build executable
-        run: pyinstaller --noconfirm --clean AttendanceList.spec
+      - name: Build installer and portable exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never
 
-      - name: Verify the executable was produced
+      - name: Verify the artifacts
         shell: pwsh
         run: |
-          if (-not (Test-Path dist/AttendanceList.exe)) {
-            throw "dist/AttendanceList.exe was not created"
-          }
-          $size = (Get-Item dist/AttendanceList.exe).Length / 1MB
-          Write-Host ("Built AttendanceList.exe ({0:N1} MB)" -f $size)
-          if ($size -lt 5) { throw "Executable is suspiciously small" }
+          $portable = "dist/AttendanceList.exe"
+          $setup = Get-ChildItem dist -Filter "AttendanceList-Setup-*.exe" | Select-Object -First 1
+          if (-not (Test-Path $portable)) { throw "portable exe was not produced" }
+          if (-not $setup) { throw "installer was not produced" }
+          "{0}: {1:N1} MB" -f $portable, ((Get-Item $portable).Length / 1MB)
+          "{0}: {1:N1} MB" -f $setup.Name, ($setup.Length / 1MB)
+          if ((Get-Item $portable).Length -lt 40MB) { throw "portable exe is suspiciously small" }
 
-      - name: Smoke-test the executable
+      - name: Smoke-test the portable exe
         shell: pwsh
         run: |
-          # Launch it briefly: catches missing CustomTkinter assets, which
-          # otherwise only surface on the user's machine.
+          # Launch it briefly. Catches a missing native module or a renderer
+          # that throws on boot — failures that otherwise only show up on the
+          # user's machine.
           $env:ATTENDANCE_DATA_DIR = "$env:RUNNER_TEMP\attendance-smoke"
           $proc = Start-Process -FilePath dist/AttendanceList.exe -PassThru
-          Start-Sleep -Seconds 25
-          if ($proc.HasExited) {
-            Write-Host "Process exited early with code $($proc.ExitCode)"
-            $log = "$env:ATTENDANCE_DATA_DIR\app.log"
-            if (Test-Path $log) { Get-Content $log }
-            throw "The application failed to stay running"
-          }
-          Stop-Process -Id $proc.Id -Force
-          if (-not (Test-Path "$env:ATTENDANCE_DATA_DIR\attendance.db")) {
-            throw "The application did not create its database"
-          }
-          Write-Host "Smoke test passed: window stayed open and the database was created."
+          Start-Sleep -Seconds 30
+          if ($proc.HasExited) { throw "the app exited early with code $($proc.ExitCode)" }
+          Get-Process -Name AttendanceList -ErrorAction SilentlyContinue | Stop-Process -Force
+          $db = "$env:ATTENDANCE_DATA_DIR\attendance.db"
+          if (-not (Test-Path $db)) { throw "the app did not create its database" }
+          Write-Host "Smoke test passed: the window stayed open and the database was created."
 
-      - name: Upload build artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AttendanceList-exe
-          path: dist/AttendanceList.exe
+          name: AttendanceList-windows
+          path: |
+            dist/AttendanceList.exe
+            dist/AttendanceList-Setup-*.exe
           retention-days: 30
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/AttendanceList.exe
+          files: |
+            dist/AttendanceList.exe
+            dist/AttendanceList-Setup-*.exe
+            dist/latest.yml
           generate_release_notes: true
           body: |
             ## Attendance List ${{ github.ref_name }}
 
-            Download **AttendanceList.exe** below and run it. No installation needed.
+            **Most people want `AttendanceList-Setup-${{ github.ref_name }}.exe`** —
+            the installer. It adds a Start menu and desktop shortcut, and lets the
+            app update itself from then on.
 
-            Windows may show a "Windows protected your PC" warning because the app
-            is not code-signed — click **More info** then **Run anyway**.
+            `AttendanceList.exe` is the portable version: one file, no install,
+            keeps its data in a `data` folder beside itself. Good for a USB stick.
 
-            If you already have an older version installed, you do not need this
+            Windows shows a "Windows protected your PC" warning because the app is
+            not code-signed — click **More info** then **Run anyway**.
+
+            If you already have an older version installed you do not need this
             page: the app offers the update itself the next time you open it.

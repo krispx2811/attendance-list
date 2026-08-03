@@ -1,1 +1,0 @@
-"""Attendance List desktop application."""

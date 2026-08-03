@@ -1,11 +1,7 @@
-build/
+node_modules/
 dist/
 data/
-__pycache__/
-*.py[cod]
-*.db
-*.db-journal
-.venv/
-venv/
 .DS_Store
+npm-debug.log*
+*.tsbuildinfo
 exports/

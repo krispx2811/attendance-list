@@ -35,6 +35,146 @@ function withDb(fn) {
 }
 
 // ---------------------------------------------------------------------------
+// the clock
+// ---------------------------------------------------------------------------
+
+const clock = require(path.join(ROOT, 'src/shared/clock'));
+
+test('the clock reads a time however it was typed', () => {
+  const cases = {
+    '8': '08:00',
+    '830': '08:30',
+    '0830': '08:30',
+    '8:30': '08:30',
+    '8.30': '08:30',
+    '17:00': '17:00',
+    '1700': '17:00',
+    '5pm': '17:00',
+    '5 PM': '17:00',
+    '8:30 am': '08:30',
+    '12am': '00:00',
+    '12pm': '12:00',
+    '12:15am': '00:15',
+    '8:02 AM': '08:02',
+  };
+  for (const [typed, stored] of Object.entries(cases)) {
+    assert.equal(clock.parse(typed), stored, `${typed} should read as ${stored}`);
+  }
+});
+
+test('an empty box clears, but nonsense is refused', () => {
+  assert.equal(clock.parse(''), '', 'empty means "not recorded"');
+  assert.equal(clock.parse('   '), '');
+  for (const bad of ['noon', '25:00', '8:75', 'abc', '99', '12:3']) {
+    assert.equal(clock.parse(bad), null, `${bad} is not a time`);
+  }
+});
+
+test('times are shown on a 12-hour clock', () => {
+  assert.equal(clock.format('08:02'), '8:02 AM');
+  assert.equal(clock.format('17:00'), '5:00 PM');
+  assert.equal(clock.format('00:30'), '12:30 AM');
+  assert.equal(clock.format('12:00'), '12:00 PM');
+  assert.equal(clock.format(''), '');
+  assert.equal(clock.format('nonsense'), '');
+});
+
+test('hours worked take the break out of the day', () => {
+  assert.equal(
+    clock.workedMinutes({
+      time_in: '08:00', break_out: '12:30', break_in: '13:00', time_out: '17:00',
+    }),
+    510,
+    'nine hours less a half-hour break'
+  );
+
+  assert.equal(
+    clock.workedMinutes({ time_in: '08:00', time_out: '17:00' }),
+    540,
+    'no break recorded means none is deducted'
+  );
+
+  assert.equal(
+    clock.workedMinutes({ time_in: '08:00', break_out: '12:30', time_out: '17:00' }),
+    540,
+    'half a break cannot be deducted'
+  );
+});
+
+test('an incomplete or backwards day yields no total', () => {
+  assert.equal(clock.workedMinutes({ time_in: '08:00' }), null);
+  assert.equal(clock.workedMinutes({ time_out: '17:00' }), null);
+  assert.equal(clock.workedMinutes({}), null);
+  assert.equal(
+    clock.workedMinutes({ time_in: '17:00', time_out: '08:00' }),
+    null,
+    'a day that runs backwards is a typo, not a night shift'
+  );
+});
+
+test('a full day is eight hours, and anything less is short', () => {
+  // 08:00 to 16:30 is eight and a half hours, less a half-hour break.
+  const fullDay = {
+    time_in: '08:00', break_out: '12:30', break_in: '13:00', time_out: '16:30',
+  };
+  assert.equal(clock.workedMinutes(fullDay), 480);
+  assert.equal(clock.shortfallMinutes(fullDay), 0, 'exactly eight hours is not short');
+
+  const shortDay = {
+    time_in: '08:00', break_out: '12:30', break_in: '13:00', time_out: '16:00',
+  };
+  assert.equal(clock.shortfallMinutes(shortDay), 30);
+  assert.equal(clock.shortfallHours(shortDay), 0.5);
+
+  const longDay = { time_in: '08:00', time_out: '18:00' };
+  assert.equal(clock.shortfallMinutes(longDay), 0, 'overtime is not a negative shortfall');
+  assert.equal(clock.overtimeMinutes(longDay), 120, 'two hours over');
+  assert.equal(clock.overtimeHours(longDay), 2);
+});
+
+test('the balance is signed, and reads with its sign', () => {
+  const over = { time_in: '08:00', time_out: '17:00' };
+  const under = { time_in: '09:00', time_out: '16:00' };
+  const exact = { time_in: '08:00', time_out: '16:00' };
+
+  assert.equal(clock.balanceMinutes(over), 60);
+  assert.equal(clock.balanceMinutes(under), -60);
+  assert.equal(clock.balanceMinutes(exact), 0);
+  assert.equal(clock.balanceMinutes({ time_in: '08:00' }), null);
+
+  assert.equal(clock.formatBalance(60), '+1h');
+  assert.equal(clock.formatBalance(-35), '−35m');
+  assert.equal(clock.formatBalance(0), '', 'a day worked exactly needs no annotation');
+  assert.equal(clock.formatBalance(null), '');
+});
+
+test('an unfinished day is not counted as short', () => {
+  assert.equal(
+    clock.shortfallMinutes({ time_in: '08:00' }),
+    null,
+    'someone who has not clocked out yet is still here, not short'
+  );
+  assert.equal(clock.shortfallMinutes({}), null);
+});
+
+test('a long break is what makes an otherwise long day short', () => {
+  assert.equal(
+    clock.shortfallMinutes({
+      time_in: '08:00', break_out: '12:00', break_in: '14:00', time_out: '17:00',
+    }),
+    60,
+    'nine hours on site less a two-hour break is seven hours worked'
+  );
+});
+
+test('durations read the way people say them', () => {
+  assert.equal(clock.formatDuration(513), '8h 33m');
+  assert.equal(clock.formatDuration(480), '8h');
+  assert.equal(clock.formatDuration(45), '45m');
+  assert.equal(clock.formatDuration(null), '');
+});
+
+// ---------------------------------------------------------------------------
 // people
 // ---------------------------------------------------------------------------
 
@@ -98,6 +238,148 @@ test('unmarking removes the record', withDb((db) => {
   db.unmark(id, '2026-08-03');
   assert.equal(db.search().length, 0);
 }));
+
+// ---------------------------------------------------------------------------
+// times of day
+// ---------------------------------------------------------------------------
+
+test('times are saved and read back on the day', withDb((db) => {
+  const id = db.addPerson('Tariq');
+  db.mark(id, '2026-08-03', 'Present');
+  db.setTimes(id, '2026-08-03', {
+    time_in: '08:02',
+    break_out: '12:30',
+    break_in: '13:05',
+    time_out: '17:00',
+  });
+
+  const row = db.getDay('2026-08-03').find((r) => r.person_id === id);
+  assert.equal(row.time_in, '08:02');
+  assert.equal(row.break_out, '12:30');
+  assert.equal(row.break_in, '13:05');
+  assert.equal(row.time_out, '17:00');
+}));
+
+test('one time can be set without disturbing the others', withDb((db) => {
+  const id = db.addPerson('Uma');
+  db.mark(id, '2026-08-03', 'Present');
+  db.setTimes(id, '2026-08-03', { time_in: '08:00', time_out: '17:00' });
+  db.setTimes(id, '2026-08-03', { break_out: '12:00' });
+
+  const row = db.search()[0];
+  assert.equal(row.time_in, '08:00');
+  assert.equal(row.time_out, '17:00');
+  assert.equal(row.break_out, '12:00');
+}));
+
+test('an empty string clears a time', withDb((db) => {
+  const id = db.addPerson('Vik');
+  db.mark(id, '2026-08-03', 'Late');
+  db.setTimes(id, '2026-08-03', { time_in: '09:14' });
+  db.setTimes(id, '2026-08-03', { time_in: '' });
+  assert.equal(db.search()[0].time_in, '');
+}));
+
+test('a time that is not HH:MM is rejected', withDb((db) => {
+  const id = db.addPerson('Wael');
+  db.mark(id, '2026-08-03', 'Present');
+
+  for (const bad of ['8am', '25:00', '08:60', 'noon', '8']) {
+    assert.throws(
+      () => db.setTimes(id, '2026-08-03', { time_in: bad }),
+      /not a valid time/i,
+      `${bad} must be rejected`
+    );
+  }
+}));
+
+test('a column outside the known times is refused', withDb((db) => {
+  const id = db.addPerson('Xena');
+  db.mark(id, '2026-08-03', 'Present');
+  assert.throws(
+    () => db.setTimes(id, '2026-08-03', { reason: 'nice try' }),
+    /no times given/i
+  );
+}));
+
+test('times need a record to attach to', withDb((db) => {
+  const id = db.addPerson('Yara');
+  assert.throws(
+    () => db.setTimes(id, '2026-08-03', { time_in: '08:00' }),
+    /status for the day first/i
+  );
+}));
+
+test('times cannot be put on someone marked absent', withDb((db) => {
+  const id = db.addPerson('Zaid');
+  db.mark(id, '2026-08-03', 'Absent', 'Sick');
+  assert.throws(
+    () => db.setTimes(id, '2026-08-03', { time_in: '08:00' }),
+    /do not apply/i
+  );
+}));
+
+test('correcting Present to Late keeps the times', withDb((db) => {
+  const id = db.addPerson('Aisha');
+  db.mark(id, '2026-08-03', 'Present');
+  db.setTimes(id, '2026-08-03', { time_in: '09:14' });
+  db.mark(id, '2026-08-03', 'Late', 'Traffic');
+
+  const row = db.search()[0];
+  assert.equal(row.status, 'Late');
+  assert.equal(row.time_in, '09:14', 'the arrival time is what proves they were late');
+}));
+
+test('marking someone absent wipes their times', withDb((db) => {
+  const id = db.addPerson('Bilal');
+  db.mark(id, '2026-08-03', 'Present');
+  db.setTimes(id, '2026-08-03', { time_in: '08:00', time_out: '17:00' });
+  db.mark(id, '2026-08-03', 'Absent', 'Sick');
+
+  const row = db.search()[0];
+  assert.equal(row.time_in, '');
+  assert.equal(row.time_out, '');
+}));
+
+test('an existing database gains the time columns without losing history',
+  withDb(async (db, { dir }) => {
+    // Rebuild a version 1 database by hand, then let migrate() bring it up.
+    db.close();
+    const Database = require('better-sqlite3');
+    const file = path.join(dir, 'attendance.db');
+    for (const stale of [file, `${file}-wal`, `${file}-shm`]) {
+      fs.rmSync(stale, { force: true });
+    }
+
+    const old = new Database(file);
+    old.exec(`
+      CREATE TABLE people (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        kind TEXT NOT NULL DEFAULT 'roster', active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL);
+      CREATE TABLE attendance (
+        id INTEGER PRIMARY KEY,
+        person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+        date TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+        recorded_at TEXT NOT NULL, UNIQUE(person_id, date));
+      INSERT INTO people (id, name, kind, active, created_at)
+        VALUES (1, 'Old Timer', 'roster', 1, '2026-01-01T00:00:00');
+      INSERT INTO attendance (person_id, date, status, reason, recorded_at)
+        VALUES (1, '2026-01-02', 'Late', 'Traffic', '2026-01-02T09:00:00');
+    `);
+    old.pragma('user_version = 1');
+    old.close();
+
+    db.connect(null, file);
+
+    const rows = db.search();
+    assert.equal(rows.length, 1, 'the old record must survive');
+    assert.equal(rows[0].reason, 'Traffic');
+    assert.equal(rows[0].time_in, '', 'old records simply have no times');
+
+    db.setTimes(1, '2026-01-02', { time_in: '08:00' });
+    assert.equal(db.search()[0].time_in, '08:00');
+  }));
 
 // ---------------------------------------------------------------------------
 // the day view
@@ -295,7 +577,104 @@ test('Excel export writes a readable workbook',
     const sheet = wb.getWorksheet('Attendance');
     assert.equal(sheet.getRow(1).getCell(1).value, 'Date');
     assert.equal(sheet.getRow(2).getCell(2).value, 'Rami');
-    assert.equal(sheet.getRow(2).getCell(3).value, 'Absent');
+    assert.equal(sheet.getRow(2).getCell(3).value, 'Absent',
+      'status must stay in column 3, which is what the row tinting looks at');
+  }));
+
+test('exported times are readable and the hours are worked out',
+  withDb(async (db, { dir }) => {
+    const id = db.addPerson('Salim');
+    db.mark(id, '2026-08-03', 'Late', 'Traffic');
+    db.setTimes(id, '2026-08-03', {
+      time_in: '09:14', break_out: '12:30', break_in: '13:00', time_out: '17:00',
+    });
+
+    const exporter = require(path.join(ROOT, 'src/main/exporter'));
+    const target = path.join(dir, 'times.xlsx');
+    await exporter.exportXlsx(db.search(), target);
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(target);
+    const row = wb.getWorksheet('Attendance').getRow(2);
+
+    assert.equal(row.getCell(4).value, '9:14 AM');
+    assert.equal(row.getCell(5).value, '12:30 PM');
+    assert.equal(row.getCell(6).value, '1:00 PM');
+    assert.equal(row.getCell(7).value, '5:00 PM');
+    assert.equal(row.getCell(8).value, '7h 16m');
+    assert.equal(row.getCell(9).value, '\u221244m', 'and how it compares to a full day');
+  }));
+
+test('the summary sheet totals the hours per person',
+  withDb(async (db, { dir }) => {
+    const id = db.addPerson('Thuraya');
+    for (const day of ['2026-08-03', '2026-08-04']) {
+      db.mark(id, day, 'Present');
+      db.setTimes(id, day, { time_in: '08:00', time_out: '16:00' });
+    }
+
+    const exporter = require(path.join(ROOT, 'src/main/exporter'));
+    const target = path.join(dir, 'report.xlsx');
+    await exporter.exportSummaryXlsx(
+      db.search(), db.perPersonStats(), db.reasonStats(), target
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(target);
+    const summary = wb.getWorksheet('Summary');
+    assert.equal(summary.getRow(1).getCell(7).value, 'Hours worked');
+    assert.equal(summary.getRow(2).getCell(7).value, 16, 'two eight-hour days');
+    assert.equal(summary.getRow(1).getCell(8).value, 'Short by');
+    assert.equal(summary.getRow(2).getCell(8).value, 0, 'both days were full');
+    assert.equal(summary.getRow(1).getCell(9).value, 'Overtime');
+    assert.equal(summary.getRow(2).getCell(9).value, 0, 'and neither ran over');
+  }));
+
+test('the summary sheet adds up how far short someone fell',
+  withDb(async (db, { dir }) => {
+    const id = db.addPerson('Nawal');
+    db.mark(id, '2026-08-03', 'Present');
+    db.setTimes(id, '2026-08-03', { time_in: '09:00', time_out: '16:00' });
+    db.mark(id, '2026-08-04', 'Late', 'Traffic');
+    db.setTimes(id, '2026-08-04', { time_in: '09:30', time_out: '16:00' });
+
+    const exporter = require(path.join(ROOT, 'src/main/exporter'));
+    const target = path.join(dir, 'short.xlsx');
+    await exporter.exportSummaryXlsx(
+      db.search(), db.perPersonStats(), db.reasonStats(), target
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(target);
+    const row = wb.getWorksheet('Summary').getRow(2);
+    assert.equal(row.getCell(7).value, 13.5, 'seven hours plus six and a half');
+    assert.equal(row.getCell(8).value, 2.5, 'one hour short plus an hour and a half');
+    assert.equal(row.getCell(9).value, 0, 'neither day ran over');
+  }));
+
+test('the summary sheet keeps overtime and shortfall apart',
+  withDb(async (db, { dir }) => {
+    const id = db.addPerson('Omar');
+    db.mark(id, '2026-08-03', 'Present');
+    db.setTimes(id, '2026-08-03', { time_in: '08:00', time_out: '18:00' });
+    db.mark(id, '2026-08-04', 'Present');
+    db.setTimes(id, '2026-08-04', { time_in: '09:00', time_out: '16:00' });
+
+    const exporter = require(path.join(ROOT, 'src/main/exporter'));
+    const target = path.join(dir, 'both.xlsx');
+    await exporter.exportSummaryXlsx(
+      db.search(), db.perPersonStats(), db.reasonStats(), target
+    );
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(target);
+    const row = wb.getWorksheet('Summary').getRow(2);
+    assert.equal(row.getCell(8).value, 1, 'the short day, not netted away');
+    assert.equal(row.getCell(9).value, 2, 'the long day, kept separate');
   }));
 
 test('the full report has three sheets', withDb(async (db, { dir }) => {

@@ -8,6 +8,7 @@
 
 (() => {
 const V = window.views;
+const C = window.clock;
 const api = window.api;
 
 const state = {
@@ -202,10 +203,11 @@ function repaintRow(personId) {
   if (!row || !el) return;
 
   const status = row.status || '';
-  el.classList.remove('is-present', 'is-late', 'is-absent', 'needs-reason');
+  el.classList.remove('is-present', 'is-late', 'is-absent', 'needs-reason', 'has-times');
   if (status) el.classList.add(`is-${status.toLowerCase()}`);
   const needsReason = status === 'Absent' || status === 'Late';
   if (needsReason) el.classList.add('needs-reason');
+  if (V.TIME_STATUSES.includes(status)) el.classList.add('has-times');
 
   $$('.segmented button', el).forEach((btn) =>
     btn.classList.toggle('is-on', btn.dataset.status === status)
@@ -217,6 +219,27 @@ function repaintRow(personId) {
   input.value = row.reason || '';
   input.placeholder = status === 'Late' ? 'Why were they late?' : 'Reason for not coming';
   input.tabIndex = needsReason ? 0 : -1;
+
+  repaintTimes(personId);
+}
+
+/**
+ * Redraw the clock strip from state.
+ *
+ * Never touches the box the user is currently in: this runs on blur as focus
+ * moves to the next field, and writing a value there would fight their typing.
+ */
+function repaintTimes(personId) {
+  const row = state.rows.find((r) => r.person_id === personId);
+  const el = $(`.person[data-person="${personId}"] .person-times`);
+  if (!row || !el) return;
+
+  $$('.time-input', el).forEach((input) => {
+    if (input === document.activeElement) return;
+    input.value = C.format(row[input.dataset.field]);
+  });
+
+  $('.worked', el).innerHTML = V.workedLabel(row);
 }
 
 async function setStatus(personId, status, { focusReason = true } = {}) {
@@ -226,6 +249,11 @@ async function setStatus(personId, status, { focusReason = true } = {}) {
   const keepsReason = status === 'Absent' || status === 'Late';
   row.status = status;
   if (!keepsReason) row.reason = '';
+  // Marking someone Absent retracts the claim that they were ever here, so
+  // the times go with it — the main process does the same to the record.
+  if (!V.TIME_STATUSES.includes(status)) {
+    for (const { field } of V.TIME_FIELDS) row[field] = '';
+  }
 
   repaintRow(personId);
   recomputeSummary();
@@ -244,10 +272,52 @@ async function clearStatus(personId) {
   if (!row || !row.status) return;
   row.status = null;
   row.reason = '';
+  for (const { field } of V.TIME_FIELDS) row[field] = '';
   repaintRow(personId);
   recomputeSummary();
   updateStatTiles();
   await guard(api.day.unmark(personId, state.day), 'Could not clear');
+}
+
+/**
+ * Save one clock box.
+ *
+ * An empty box clears the time; anything unreadable is put back the way it
+ * was rather than saved, because a wrong time is worse than no time.
+ */
+async function saveTime(personId, field, typed) {
+  const row = state.rows.find((r) => r.person_id === personId);
+  if (!row || !V.TIME_STATUSES.includes(row.status)) return;
+
+  const parsed = C.parse(typed);
+  if (parsed === null) {
+    repaintTimes(personId);
+    return toast(`“${typed.trim()}” is not a time. Try 8:30, 830 or 5pm.`, { error: true });
+  }
+  if (parsed === (row[field] || '')) return repaintTimes(personId);
+
+  const previous = row[field] || '';
+  row[field] = parsed;
+  repaintTimes(personId);
+
+  const saved = await guard(
+    api.day.setTimes(personId, state.day, { [field]: parsed }),
+    'Could not save the time'
+  );
+  if (saved === null) {
+    row[field] = previous;
+    repaintTimes(personId);
+  }
+}
+
+/**
+ * The ⏱ button: whatever the clock says this second.
+ *
+ * Clicking the button has already moved focus off the input, so its blur
+ * handler has run and repaintTimes is free to write the new value in.
+ */
+function stampNow(personId, field) {
+  return saveTime(personId, field, C.nowStored());
 }
 
 async function saveReason(personId, value) {
@@ -277,12 +347,17 @@ function wireToday() {
   const body = $('.view');
 
   body.addEventListener('click', async (event) => {
-    const act = event.target.closest('[data-act]')?.dataset.act;
+    const actEl = event.target.closest('[data-act]');
+    const act = actEl?.dataset.act;
     const statusBtn = event.target.closest('.segmented button');
     const personEl = event.target.closest('.person');
 
     if (statusBtn && personEl) {
       return setStatus(Number(personEl.dataset.person), statusBtn.dataset.status);
+    }
+
+    if (act === 'stamp' && personEl) {
+      return stampNow(Number(personEl.dataset.person), actEl.dataset.field);
     }
 
     switch (act) {
@@ -341,17 +416,31 @@ function wireToday() {
   body.addEventListener(
     'blur',
     (event) => {
-      if (!event.target.classList?.contains('reason-input')) return;
-      const personEl = event.target.closest('.person');
-      saveReason(Number(personEl.dataset.person), event.target.value);
+      const personEl = event.target.closest?.('.person');
+      if (!personEl) return;
+
+      if (event.target.classList?.contains('reason-input')) {
+        saveReason(Number(personEl.dataset.person), event.target.value);
+      } else if (event.target.classList?.contains('time-input')) {
+        saveTime(Number(personEl.dataset.person), event.target.dataset.field, event.target.value);
+      }
     },
     true
   );
 
   body.addEventListener('keydown', (event) => {
-    if (event.target.classList?.contains('reason-input')) {
-      if (event.key === 'Enter') event.target.blur();
-      return;
+    const isReason = event.target.classList?.contains('reason-input');
+    const isTime = event.target.classList?.contains('time-input');
+    if (!isReason && !isTime) return;
+
+    // Enter commits by blurring, which is what already saves. Escape puts the
+    // box back the way it was without saving.
+    if (event.key === 'Enter') return event.target.blur();
+    if (event.key === 'Escape' && isTime) {
+      const personEl = event.target.closest('.person');
+      const row = state.rows.find((r) => r.person_id === Number(personEl.dataset.person));
+      if (row) event.target.value = C.format(row[event.target.dataset.field]);
+      event.target.blur();
     }
   });
 }
@@ -647,7 +736,7 @@ async function refreshHistory() {
 
   const body = $('#history-body');
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="4">
+    body.innerHTML = `<tr><td colspan="8">
       <div class="empty" style="padding:48px 0">
         <div class="empty-icon">${V.icons.inbox}</div>
         <h2>Nothing to show</h2>
@@ -657,15 +746,24 @@ async function refreshHistory() {
   }
 
   body.innerHTML = rows
-    .map(
-      (r) => `
+    .map((r) => {
+      const worked = C.formatDuration(C.workedMinutes(r));
+      const balance = C.balanceMinutes(r);
+      const tone = !balance ? '' : balance > 0 ? ' is-over' : ' is-short';
+      return `
       <tr data-person="${r.person_id}">
         <td class="date">${V.esc(r.date)}</td>
         <td><div class="row-name">${V.avatar(r.name, true)}<span>${V.esc(r.name)}</span></div></td>
         <td>${V.statusPill(r.status)}</td>
+        <td class="time">${V.timeCell(r.time_in)}</td>
+        <td class="time">${V.breakSpan(r)}</td>
+        <td class="time">${V.timeCell(r.time_out)}</td>
+        <td class="num${tone}"${
+          balance ? ` title="${V.esc(C.formatBalance(balance))} against a full day"` : ''
+        }>${worked ? V.esc(worked) : '<span class="muted">—</span>'}</td>
         <td>${r.reason ? V.esc(r.reason) : '<span class="muted">—</span>'}</td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join('');
 }
 
@@ -695,6 +793,9 @@ async function showPersonHistory(personId) {
   const absent = rows.filter((r) => r.status === 'Absent').length;
   const rate = rows.length ? Math.round(((present + late) / rows.length) * 100) : 0;
 
+  const totalWorked = rows.reduce((sum, r) => sum + (C.workedMinutes(r) || 0), 0);
+  const totalBalance = rows.reduce((sum, r) => sum + (C.balanceMinutes(r) || 0), 0);
+
   openModal({
     title: person.name,
     subtitle: `${rows.length} recorded ${rows.length === 1 ? 'day' : 'days'}`,
@@ -704,18 +805,38 @@ async function showPersonHistory(personId) {
         <div><span class="n" style="color:var(--late)">${late}</span><span class="l">Late</span></div>
         <div><span class="n" style="color:var(--absent)">${absent}</span><span class="l">Absent</span></div>
         <div><span class="n">${rate}%</span><span class="l">Attendance</span></div>
+        <div><span class="n">${totalWorked ? V.esc(C.formatDuration(totalWorked)) : '—'}</span><span class="l">Worked</span></div>
+        <div><span class="n"${
+          totalBalance ? ` style="color:var(--${totalBalance > 0 ? 'present' : 'absent'})"` : ''
+        }>${
+          totalBalance ? V.esc(C.formatBalance(totalBalance)) : '—'
+        }</span><span class="l">Balance</span></div>
       </div>
       <div class="history-list">
         ${
           rows.length
             ? rows
-                .map(
-                  (r) => `<div class="history-row">
+                .map((r) => {
+                  const times = [
+                    C.format(r.time_in) && `In ${C.format(r.time_in)}`,
+                    C.format(r.break_out) &&
+                      `Break ${C.format(r.break_out)}–${C.format(r.break_in) || '?'}`,
+                    C.format(r.time_out) && `Out ${C.format(r.time_out)}`,
+                  ].filter(Boolean);
+                  const worked = C.formatDuration(C.workedMinutes(r));
+                  const bal = C.balanceMinutes(r);
+                  const tone = !bal ? '' : bal > 0 ? ' is-over' : ' is-short';
+                  return `<div class="history-row">
                     <span class="date">${V.esc(r.date)}</span>
                     ${V.statusPill(r.status)}
-                    <span class="reason">${V.esc(r.reason || '')}</span>
-                  </div>`
-                )
+                    <span class="reason">${
+                      times.length
+                        ? `<span class="times">${V.esc(times.join(' · '))}</span>`
+                        : ''
+                    }${r.reason ? V.esc(r.reason) : ''}</span>
+                    <span class="worked${tone}">${worked ? V.esc(worked) : ''}</span>
+                  </div>`;
+                })
                 .join('')
             : '<p class="muted">No records yet.</p>'
         }
@@ -788,6 +909,23 @@ async function refreshReports() {
   const late = rows.filter((r) => r.status === 'Late').length;
   const rate = rows.length ? Math.round(((rows.length - absent) / rows.length) * 100) : 0;
 
+  // Hours are added up from the records rather than asked of the database:
+  // the figure comes from four columns, which is arithmetic SQL should not do.
+  const workedByPerson = new Map();
+  const balanceByPerson = new Map();
+  let workedTotal = 0;
+  let balanceTotal = 0;
+  for (const row of rows) {
+    const minutes = C.workedMinutes(row);
+    if (minutes === null) continue;
+    workedByPerson.set(row.person_id, (workedByPerson.get(row.person_id) || 0) + minutes);
+    workedTotal += minutes;
+
+    const balance = C.balanceMinutes(row);
+    balanceByPerson.set(row.person_id, (balanceByPerson.get(row.person_id) || 0) + balance);
+    balanceTotal += balance;
+  }
+
   $('#reports-range').textContent =
     start || end ? `${start || 'the beginning'} → ${end || 'today'}` : 'All time';
 
@@ -797,6 +935,18 @@ async function refreshReports() {
     <span><strong>${absent}</strong> absences</span>
     <span><strong>${late}</strong> late</span>
     <span><strong>${overall.days}</strong> days recorded</span>
+    ${
+      workedTotal
+        ? `<span><strong>${V.esc(C.formatDuration(workedTotal))}</strong> worked</span>`
+        : ''
+    }
+    ${
+      balanceTotal
+        ? `<span style="color:var(--${balanceTotal > 0 ? 'present' : 'absent'})"><strong>${V.esc(
+            C.formatBalance(balanceTotal)
+          )}</strong> against full days</span>`
+        : ''
+    }
     <span class="muted">${overall.firstDate || '—'} to ${overall.lastDate || '—'}</span>`;
 
   $('#reports-body').innerHTML = stats
@@ -805,6 +955,8 @@ async function refreshReports() {
       const attended = (s.present || 0) + (s.late || 0);
       const pct = recorded ? Math.round((attended / recorded) * 100) : null;
       const cls = pct === null ? '' : pct >= 90 ? '' : pct >= 75 ? ' is-mid' : ' is-low';
+      const worked = C.formatDuration(workedByPerson.get(s.person_id) || null);
+      const balance = balanceByPerson.get(s.person_id) || 0;
       return `
         <tr>
           <td><div class="row-name">${V.avatar(s.name, true)}<span>${V.esc(s.name)}${
@@ -814,6 +966,10 @@ async function refreshReports() {
           <td class="num">${s.present || 0}</td>
           <td class="num">${s.late || 0}</td>
           <td class="num"${s.absent ? ' style="color:var(--absent);font-weight:560"' : ''}>${s.absent || 0}</td>
+          <td class="num">${worked ? V.esc(worked) : '<span class="muted">—</span>'}</td>
+          <td class="num${!balance ? '' : balance > 0 ? ' is-over' : ' is-short'}">${
+            balance ? V.esc(C.formatBalance(balance)) : '<span class="muted">—</span>'
+          }</td>
           <td>
             ${
               pct === null

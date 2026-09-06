@@ -83,6 +83,10 @@ function registerIpc({ app, getWindow }) {
     reasons: db.knownReasons(),
   }));
   handle('day:mark', (id, day, status, reason) => db.mark(id, day, status, reason));
+  handle('day:setTimes', (id, day, patch) => {
+    if (!patch || typeof patch !== 'object') throw new Error('Expected times to set');
+    return db.setTimes(id, day, patch);
+  });
   handle('day:markAllPresent', (day) => {
     const pending = db.getDay(day).filter((r) => !r.status).map((r) => r.person_id);
     db.markMany(pending, day, db.STATUS_PRESENT);

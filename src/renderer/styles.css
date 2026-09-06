@@ -866,6 +866,130 @@ select.input {
   color: var(--text);
 }
 
+/* Clock strip — a full-width second line of the person row, shown only for
+   someone who was actually here. display:none collapses the grid row, so
+   absent and unrecorded rows keep exactly the height they always had. */
+.person-times {
+  display: none;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  /* Line up under the name: avatar width plus the row gap. */
+  margin: 2px 0 0 48px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+
+.person.has-times .person-times {
+  display: flex;
+}
+
+.time-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.time-label {
+  font-size: 11.5px;
+  font-weight: 520;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.time-input {
+  width: 92px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.time-input::placeholder {
+  color: var(--text-faint);
+}
+
+.time-now {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-xs);
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease), background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+
+.time-now svg {
+  width: 14px;
+  height: 14px;
+}
+
+.person:hover .time-now,
+.time-now:focus-visible,
+.time-input:focus + .time-now {
+  opacity: 1;
+}
+
+.time-now:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* Hours worked, pushed to the end of the strip. */
+.worked {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* How the day compares to a full eight hours. The point of recording times at
+   all is to see this, so it is coloured rather than whispered: red when short,
+   green when they are owed the difference. */
+.worked .short,
+.is-short {
+  color: var(--absent);
+  font-weight: 560;
+}
+
+.worked .over,
+.is-over {
+  color: var(--present);
+  font-weight: 560;
+}
+
+.worked .short,
+.worked .over {
+  margin-left: 5px;
+}
+
+/* Times in tables and lists read as data, not prose. */
+td.time,
+.history-row .times {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-row .times {
+  color: var(--text-faint);
+  margin-right: 8px;
+}
+
+/* In the person popup the reason already claims the free space, so the
+   total sits at a fixed width on the end instead of fighting it for room. */
+.history-row .worked {
+  margin-left: 0;
+  width: 62px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 /* ==========================================================================
    Tables
    ========================================================================== */
@@ -1405,5 +1529,19 @@ td.date {
   }
   .reason-wrap {
     width: 170px;
+  }
+  /* Four clock boxes and a total will not sit on one line at this width;
+     let them wrap rather than squeezing each one unreadably narrow. */
+  .time-label {
+    font-size: 11px;
+  }
+  .time-input {
+    width: 84px;
+  }
+  .person-times {
+    gap: 8px 12px;
+  }
+  .worked {
+    margin-left: 0;
   }
 }

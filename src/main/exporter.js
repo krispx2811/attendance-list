@@ -10,7 +10,22 @@
 const fs = require('node:fs');
 const ExcelJS = require('exceljs');
 
-const HEADERS = ['Date', 'Name', 'Status', 'Reason for not coming', 'Recorded at'];
+const clock = require('../shared/clock');
+
+// Status stays the third column: the row tinting below finds it by position.
+const HEADERS = [
+  'Date',
+  'Name',
+  'Status',
+  'In',
+  'Break out',
+  'Break in',
+  'Out',
+  'Hours worked',
+  'Balance',
+  'Reason for not coming',
+  'Recorded at',
+];
 
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F4E78' } };
 const HEADER_FONT = { color: { argb: 'FFFFFFFF' }, bold: true };
@@ -22,7 +37,19 @@ const STATUS_FILL = {
 };
 
 const toRecords = (rows) =>
-  rows.map((r) => [r.date, r.name, r.status, r.reason || '', r.recorded_at]);
+  rows.map((r) => [
+    r.date,
+    r.name,
+    r.status,
+    clock.format(r.time_in),
+    clock.format(r.break_out),
+    clock.format(r.break_in),
+    clock.format(r.time_out),
+    clock.formatDuration(clock.workedMinutes(r)),
+    clock.formatBalance(clock.balanceMinutes(r)),
+    r.reason || '',
+    r.recorded_at,
+  ]);
 
 function csvCell(value) {
   const text = String(value ?? '');
@@ -98,8 +125,27 @@ async function exportSummaryXlsx(rows, stats, reasons, destination) {
   autosize(records);
   records.views = [{ state: 'frozen', ySplit: 1 }];
 
+  // Hours come from the records rather than the stats query: they are worked
+  // out from four columns, which is arithmetic SQL should not be doing.
+  const hoursByPerson = new Map();
+  const shortByPerson = new Map();
+  const overByPerson = new Map();
+  for (const row of rows) {
+    const hours = clock.workedHours(row);
+    if (hours === null) continue;
+    const add = (map, value) => map.set(row.person_id, (map.get(row.person_id) || 0) + value);
+    add(hoursByPerson, hours);
+    add(shortByPerson, clock.shortfallHours(row));
+    add(overByPerson, clock.overtimeHours(row));
+  }
+
+  const round = (n) => Math.round((n || 0) * 100) / 100;
+
   const summary = wb.addWorksheet('Summary');
-  summary.addRow(['Name', 'Recorded days', 'Present', 'Late', 'Absent', 'Attendance rate']);
+  summary.addRow([
+    'Name', 'Recorded days', 'Present', 'Late', 'Absent', 'Attendance rate',
+    'Hours worked', 'Short by', 'Overtime',
+  ]);
   for (const s of stats) {
     const recorded = s.recorded || 0;
     const attended = (s.present || 0) + (s.late || 0);
@@ -110,9 +156,13 @@ async function exportSummaryXlsx(rows, stats, reasons, destination) {
       s.late || 0,
       s.absent || 0,
       recorded ? attended / recorded : 0,
+      round(hoursByPerson.get(s.person_id)),
+      round(shortByPerson.get(s.person_id)),
+      round(overByPerson.get(s.person_id)),
     ]);
   }
   summary.getColumn(6).numFmt = '0%';
+  for (const column of [7, 8, 9]) summary.getColumn(column).numFmt = '0.00';
   styleHeader(summary);
   autosize(summary);
   summary.views = [{ state: 'frozen', ySplit: 1 }];

@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('api', {
   day: {
     get: (day) => call('day:get', day),
     mark: (id, day, status, reason) => call('day:mark', id, day, status, reason),
+    setTimes: (id, day, patch) => call('day:setTimes', id, day, patch),
     markAllPresent: (day) => call('day:markAllPresent', day),
     unmark: (id, day) => call('day:unmark', id, day),
     clear: (day) => call('day:clear', day),

@@ -13,8 +13,9 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const paths = require('./paths');
+const clock = require('../shared/clock');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const STATUS_PRESENT = 'Present';
 const STATUS_LATE = 'Late';
@@ -23,6 +24,17 @@ const STATUSES = [STATUS_PRESENT, STATUS_LATE, STATUS_ABSENT];
 
 /** Statuses for which a reason is meaningful. */
 const REASON_STATUSES = [STATUS_ABSENT, STATUS_LATE];
+
+/** Statuses for which times of day are meaningful — someone who was here. */
+const TIME_STATUSES = [STATUS_PRESENT, STATUS_LATE];
+
+/**
+ * The clock columns, in the order a day happens.
+ *
+ * Also the whitelist that makes the generated UPDATE in setTimes safe: no
+ * column name reaches SQL unless it is one of these.
+ */
+const TIME_FIELDS = ['time_in', 'break_out', 'break_in', 'time_out'];
 
 const KIND_ROSTER = 'roster';
 const KIND_WALKIN = 'walkin';
@@ -104,7 +116,17 @@ function migrate() {
       CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
       CREATE INDEX IF NOT EXISTS idx_attendance_person ON attendance(person_id);
     `);
-    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    db.pragma('user_version = 1');
+  }
+
+  // v2 adds the clock. Added by ALTER rather than folded into the CREATE
+  // above so that a database written by version 1 — or by the Python build
+  // before it — gains the columns on first open with its history intact.
+  if (current < 2) {
+    for (const field of TIME_FIELDS) {
+      db.exec(`ALTER TABLE attendance ADD COLUMN ${field} TEXT NOT NULL DEFAULT ''`);
+    }
+    db.pragma('user_version = 2');
   }
 }
 
@@ -223,6 +245,10 @@ function seedDefaultPeople() {
  *
  * The UNIQUE(person_id, date) constraint plus ON CONFLICT is what makes
  * re-marking someone update their row instead of duplicating it.
+ *
+ * Times survive a re-mark — correcting Present to Late must not throw away
+ * the arrival time that proves it — except when the new status says the
+ * person was never here, which makes any time on the row a leftover lie.
  */
 function mark(personId, day, status, reason = '') {
   if (!STATUSES.includes(status)) throw new Error(`Unknown status: ${status}`);
@@ -236,6 +262,46 @@ function mark(personId, day, status, reason = '') {
        reason      = excluded.reason,
        recorded_at = excluded.recorded_at`
   ).run(personId, day, status, text, now());
+
+  if (!TIME_STATUSES.includes(status)) clearTimes(personId, day);
+}
+
+/**
+ * Set one or more times on an existing record.
+ *
+ * Deliberately separate from mark(): the two are edited independently, and
+ * saving a break time must not reassert a status the user changed a moment
+ * ago in another field.
+ */
+function setTimes(personId, day, patch = {}) {
+  const fields = Object.keys(patch).filter((field) => TIME_FIELDS.includes(field));
+  if (!fields.length) throw new Error('No times given.');
+
+  const values = fields.map((field) => {
+    const value = String(patch[field] ?? '').trim();
+    if (!clock.isStorable(value)) throw new Error(`Not a valid time: ${patch[field]}`);
+    return value;
+  });
+
+  const record = db
+    .prepare('SELECT id, status FROM attendance WHERE person_id = ? AND date = ?')
+    .get(personId, day);
+  if (!record) throw new Error('Give this person a status for the day first.');
+  if (!TIME_STATUSES.includes(record.status)) {
+    throw new Error(`Times do not apply to someone marked ${record.status}.`);
+  }
+
+  const assignments = fields.map((field) => `${field} = ?`).join(', ');
+  db.prepare(`UPDATE attendance SET ${assignments}, recorded_at = ? WHERE id = ?`)
+    .run(...values, now(), record.id);
+
+  return true;
+}
+
+function clearTimes(personId, day) {
+  const assignments = TIME_FIELDS.map((field) => `${field} = ''`).join(', ');
+  db.prepare(`UPDATE attendance SET ${assignments} WHERE person_id = ? AND date = ?`)
+    .run(personId, day);
 }
 
 function markMany(personIds, day, status) {
@@ -264,6 +330,10 @@ function getDay(day) {
               p.active      AS active,
               a.status      AS status,
               a.reason      AS reason,
+              a.time_in     AS time_in,
+              a.break_out   AS break_out,
+              a.break_in    AS break_in,
+              a.time_out    AS time_out,
               a.recorded_at AS recorded_at
        FROM people p
        LEFT JOIN attendance a ON a.person_id = p.id AND a.date = ?
@@ -285,7 +355,8 @@ function daySummary(day) {
 
 function search({ nameQuery = '', start = null, end = null, status = null } = {}) {
   let sql = `
-    SELECT a.id, a.date, a.status, a.reason, a.recorded_at,
+    SELECT a.id, a.date, a.status, a.reason,
+           a.time_in, a.break_out, a.break_in, a.time_out, a.recorded_at,
            p.id AS person_id, p.name AS name, p.kind AS kind
     FROM attendance a
     JOIN people p ON p.id = a.person_id
@@ -315,7 +386,8 @@ function search({ nameQuery = '', start = null, end = null, status = null } = {}
 function personHistory(personId) {
   return db
     .prepare(
-      `SELECT a.date, a.status, a.reason, a.recorded_at
+      `SELECT a.date, a.status, a.reason,
+              a.time_in, a.break_out, a.break_in, a.time_out, a.recorded_at
        FROM attendance a WHERE a.person_id = ? ORDER BY a.date DESC`
     )
     .all(personId);
@@ -459,6 +531,8 @@ module.exports = {
   STATUS_ABSENT,
   STATUSES,
   REASON_STATUSES,
+  TIME_STATUSES,
+  TIME_FIELDS,
   KIND_ROSTER,
   KIND_WALKIN,
   DEFAULT_EMPLOYEES,
@@ -476,6 +550,8 @@ module.exports = {
   seedDefaultPeople,
   mark,
   markMany,
+  setTimes,
+  clearTimes,
   unmark,
   getDay,
   daySummary,

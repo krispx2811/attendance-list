@@ -41,6 +41,30 @@ The screen you use each morning.
 
 Everything saves the moment you click. There is no Save button.
 
+### Times
+
+Anyone marked Present or Late gets four clock boxes: **In**, **Break out**,
+**Break in** and **Out**. All four are optional — fill in only what you care
+about. The In time is what shows whether someone was early or late.
+
+Type a time however you like: `8`, `830`, `8:30`, `8.30`, `5pm` and `17:00` all
+work, and it tidies itself up when you click away. The ⏱ button beside each box
+fills in the current time, which is the quick way to record a break as it
+happens. <kbd>Esc</kbd> puts a box back if you change your mind mid-typing.
+
+**Hours worked** appears at the end of the line once both In and Out are
+filled, with the break taken off. It is worked out each time, never stored — fix
+a wrong time and the total corrects itself.
+
+A full day is **8 hours**, and the difference rides along beside the total:
+`7h 25m` `−35m` in red when someone is short, `9h` `+1h` in green when they
+worked over. A short day is visible the moment they clock out rather than at the
+end of the month. Long breaks count against it — nine hours on site with a
+two-hour break is seven hours worked. A day with no Out time yet is neither
+short nor over; it is simply not finished.
+
+Marking someone **Absent** clears their times, since they were not here.
+
 **Keyboard** — much faster than clicking once you have more than a few people:
 
 | Key | Does |
@@ -70,7 +94,9 @@ Search past records by name, date range or status, then export.
 - Click any row to see that person's full history and attendance rate.
 
 ### Reports
-Attendance rate per person, the most common reasons for absence, and:
+Attendance rate per person, **hours worked** and the **balance** against full
+days (green over, red short) for the chosen date range, the most common reasons
+for absence, and:
 
 - **Full report** — one workbook with three sheets: Records, Summary, Reasons.
 - **Back up now** and **Save a copy** for keeping a copy elsewhere.
@@ -144,6 +170,7 @@ ATTENDANCE_DATA_DIR=/tmp/attendance-dev npm start
 | `src/main/updater.js` | GitHub release checks via electron-updater |
 | `src/main/ipc.js` | The only channels the UI can call |
 | `src/main/paths.js` | Where the database and backups live |
+| `src/shared/clock.js` | Times of day: parsing, display, hours worked — used by both sides |
 | `src/preload/preload.js` | The renderer's entire view of the outside world |
 | `src/renderer/` | The interface: `styles.css` is the design system |
 | `tests/db.test.js` | Storage and export tests |

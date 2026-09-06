@@ -4,6 +4,17 @@
 
 const STATUSES = ['Present', 'Late', 'Absent'];
 
+/** Statuses for which the clock strip is shown — someone who was actually here. */
+const TIME_STATUSES = ['Present', 'Late'];
+
+/** The clock fields, in the order the day happens. */
+const TIME_FIELDS = [
+  { field: 'time_in', label: 'In' },
+  { field: 'break_out', label: 'Break out' },
+  { field: 'break_in', label: 'Break in' },
+  { field: 'time_out', label: 'Out' },
+];
+
 const AVATAR_COLORS = [
   '#5b5bd6', '#0e9f6e', '#c2751a', '#c0392b', '#8e44ad',
   '#0f8f8f', '#d05a1e', '#2b6cb0', '#a03a6e', '#5566bf',
@@ -53,6 +64,7 @@ const icons = {
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
   inbox: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.2V12l3 1.9"/></svg>',
 };
 
 // ---------------------------------------------------------------------------
@@ -167,10 +179,61 @@ function todayView({ day, summary, note }) {
     </section>`;
 }
 
+/** One labelled clock box, with a button that stamps the time right now. */
+function timeField(row, { field, label }) {
+  return `
+    <div class="time-field">
+      <span class="time-label">${label}</span>
+      <input class="input time-input" data-field="${field}"
+             value="${esc(window.clock.format(row[field]))}"
+             placeholder="—" spellcheck="false" autocomplete="off"
+             aria-label="${label} time for ${esc(row.name)}" />
+      <button class="time-now" data-act="stamp" data-field="${field}"
+              title="Set to now" aria-label="Set ${label} to now">${icons.clock}</button>
+    </div>`;
+}
+
+/**
+ * The clock strip.
+ *
+ * A full-width second line of the person row rather than more boxes crammed
+ * onto the first: four times and a total do not fit beside a name, a status
+ * control and a reason at any window width worth designing for.
+ */
+function timeStrip(row) {
+  return `
+    <div class="person-times">
+      ${TIME_FIELDS.map((spec) => timeField(row, spec)).join('')}
+      <span class="worked">${workedLabel(row)}</span>
+    </div>`;
+}
+
+/**
+ * The hours total, and how it compares to a full day.
+ *
+ * A bare number does not answer the question anyone actually has, which is
+ * whether the person did their eight hours — so the difference rides along
+ * with it, red when they are short and green when they are owed.
+ */
+function workedLabel(row) {
+  const C = window.clock;
+  const worked = C.workedMinutes(row);
+  if (worked === null) return '';
+
+  const total = esc(C.formatDuration(worked));
+  const balance = C.balanceMinutes(row);
+  if (!balance) return total;
+
+  return `${total} <span class="${balance > 0 ? 'over' : 'short'}">${esc(
+    C.formatBalance(balance)
+  )}</span>`;
+}
+
 function personRow(row, index) {
   const status = row.status || '';
   const cls = status ? ` is-${status.toLowerCase()}` : '';
   const needsReason = status === 'Absent' || status === 'Late';
+  const hasTimes = TIME_STATUSES.includes(status);
   const isGuest = row.kind === 'walkin';
 
   const meta = status
@@ -180,7 +243,7 @@ function personRow(row, index) {
   const placeholder = status === 'Late' ? 'Why were they late?' : 'Reason for not coming';
 
   return `
-    <div class="person${cls}${needsReason ? ' needs-reason' : ''}"
+    <div class="person${cls}${needsReason ? ' needs-reason' : ''}${hasTimes ? ' has-times' : ''}"
          data-person="${row.person_id}" data-index="${index}">
       ${avatar(row.name)}
       <div class="person-id">
@@ -205,6 +268,7 @@ function personRow(row, index) {
           ${icons.x}
         </button>
       </div>
+      ${timeStrip(row)}
     </div>`;
 }
 
@@ -307,6 +371,10 @@ function historyView() {
                 <th>Date</th>
                 <th>Name</th>
                 <th>Status</th>
+                <th>In</th>
+                <th>Break</th>
+                <th>Out</th>
+                <th class="num">Hours</th>
                 <th>Reason for not coming</th>
               </tr>
             </thead>
@@ -357,6 +425,8 @@ function reportsView() {
                   <th class="num">Present</th>
                   <th class="num">Late</th>
                   <th class="num">Absent</th>
+                  <th class="num">Hours</th>
+                  <th class="num">Balance</th>
                   <th style="width:130px">Attendance</th>
                 </tr>
               </thead>
@@ -373,8 +443,28 @@ function reportsView() {
     </section>`;
 }
 
+/** `12:30 PM → 1:05 PM`, or a dash when the break was not recorded. */
+function breakSpan(row) {
+  const out = window.clock.format(row.break_out);
+  const back = window.clock.format(row.break_in);
+  if (!out && !back) return '<span class="muted">—</span>';
+  return `${esc(out || '?')} <span class="muted">→</span> ${esc(back || '?')}`;
+}
+
+/** A time for a table cell, dashed when blank so columns stay readable. */
+function timeCell(stored) {
+  const text = window.clock.format(stored);
+  return text ? esc(text) : '<span class="muted">—</span>';
+}
+
 window.views = {
   STATUSES,
+  TIME_STATUSES,
+  TIME_FIELDS,
+  breakSpan,
+  timeCell,
+  timeStrip,
+  workedLabel,
   esc,
   avatar,
   avatarColor,

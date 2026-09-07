@@ -21,10 +21,6 @@
 
 !define APPDATA_FOLDER "attendance-list"
 
-; A named variable rather than a scratch register: the code this macro sits
-; inside uses $R0-$R3, and a clash here would be silent and destructive.
-Var /GLOBAL hadAttendanceData
-
 !macro customInit
   ; $INSTDIR is already the existing installation at this point: initMultiUser
   ; has read it back from the registry.
@@ -47,9 +43,13 @@ Var /GLOBAL hadAttendanceData
 !macro customRemoveFiles
   ; Everything electron-builder's default branch does, except that the data
   ; folder is carried across the wipe and put back afterwards.
-  StrCpy $hadAttendanceData "0"
+  ;
+  ; Whether there was data to save is not tracked in a variable: this file is
+  ; compiled into the installer as well, where this macro is never inserted,
+  ; and a variable that goes unread there is a warning, which the build treats
+  ; as an error. The presence of the temporary copy answers the question just
+  ; as well.
   ${if} ${FileExists} "$INSTDIR\data\*.*"
-    StrCpy $hadAttendanceData "1"
     CreateDirectory "$PLUGINSDIR\attendance-data"
     CopyFiles /SILENT "$INSTDIR\data" "$PLUGINSDIR\attendance-data"
   ${endif}
@@ -75,7 +75,7 @@ Var /GLOBAL hadAttendanceData
   SetOutPath $TEMP
   RMDir /r $INSTDIR
 
-  ${if} $hadAttendanceData == "1"
+  ${if} ${FileExists} "$PLUGINSDIR\attendance-data\data\*.*"
     CreateDirectory "$INSTDIR"
     CopyFiles /SILENT "$PLUGINSDIR\attendance-data\data" "$INSTDIR"
   ${endif}

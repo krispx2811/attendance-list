@@ -13,6 +13,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const paths = require('./paths');
+const settings = require('./settings');
 const clock = require('../shared/clock');
 
 const SCHEMA_VERSION = 2;
@@ -38,8 +39,6 @@ const TIME_FIELDS = ['time_in', 'break_out', 'break_in', 'time_out'];
 
 const KIND_ROSTER = 'roster';
 const KIND_WALKIN = 'walkin';
-
-const BACKUPS_TO_KEEP = 14;
 
 /**
  * Employees a brand-new database starts with, so a fresh install is ready to
@@ -480,27 +479,61 @@ function overallStats() {
 // backups
 // ---------------------------------------------------------------------------
 
+/** Where backups go, and how many are kept, are both user settings now. */
+const backupDir = () => settings.load(appRef).backupDir;
+
 /**
  * Write a consistent copy into the backups folder.
  *
  * Uses SQLite's online backup rather than a file copy: the database runs in
  * WAL mode, so copying only the .db would drop commits still in the sidecar.
+ *
+ * Same-day backups are numbered rather than overwritten. Overwriting means a
+ * mistake made and noticed on the same day destroys the copy that would have
+ * undone it.
  */
 async function backupNow() {
-  const dir = paths.backupDir(appRef);
+  const dir = backupDir();
   fs.mkdirSync(dir, { recursive: true });
-  const target = path.join(dir, `attendance-${todayStr()}.db`);
+
+  let target = path.join(dir, `attendance-${todayStr()}.db`);
+  for (let n = 2; fs.existsSync(target); n += 1) {
+    target = path.join(dir, `attendance-${todayStr()}-${n}.db`);
+  }
+
   await db.backup(target);
   pruneBackups(dir);
   return target;
 }
 
+/** List the backups on disk, newest first. */
+function listBackups() {
+  const dir = backupDir();
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+
+  return names
+    .filter((name) => /^attendance-\d{4}-\d{2}-\d{2}(-\d+)?\.db$/.test(name))
+    .map((name) => {
+      const file = path.join(dir, name);
+      const stat = fs.statSync(file);
+      return { name, file, size: stat.size, taken: stat.mtime.toISOString().slice(0, 19) };
+    })
+    .sort((a, b) => (a.taken < b.taken ? 1 : -1));
+}
+
 function pruneBackups(dir) {
+  const keep = settings.load(appRef).backupsToKeep;
   const files = fs
     .readdirSync(dir)
     .filter((f) => f.startsWith('attendance-') && f.endsWith('.db'))
     .sort();
-  for (const stale of files.slice(0, -BACKUPS_TO_KEEP)) {
+
+  for (const stale of files.slice(0, -keep)) {
     try {
       fs.unlinkSync(path.join(dir, stale));
     } catch {
@@ -509,10 +542,16 @@ function pruneBackups(dir) {
   }
 }
 
-/** Back up at most once a day, on startup. */
-async function backupIfStale() {
-  const target = path.join(paths.backupDir(appRef), `attendance-${todayStr()}.db`);
-  if (fs.existsSync(target)) return null;
+/** Back up on startup, as often as the settings ask for. */
+async function backupIfDue() {
+  const { backupFrequency } = settings.load(appRef);
+  if (backupFrequency === 'off') return null;
+
+  if (backupFrequency === 'daily') {
+    const today = listBackups().some((b) => b.name.startsWith(`attendance-${todayStr()}`));
+    if (today) return null;
+  }
+
   try {
     return await backupNow();
   } catch {
@@ -523,6 +562,46 @@ async function backupIfStale() {
 async function exportDatabaseCopy(destination) {
   await db.backup(destination);
   return destination;
+}
+
+/**
+ * Replace the live database with a copy of another one.
+ *
+ * The current database is backed up first, unconditionally: restoring the
+ * wrong file is an easy mistake and it must not be the last thing that ever
+ * happens to the real records. The connection is closed and reopened around
+ * the swap, and the WAL sidecars are removed, or SQLite would replay them
+ * over the file just restored and undo it.
+ */
+async function restoreFromFile(source) {
+  if (!fs.existsSync(source)) throw new Error('That backup file no longer exists.');
+
+  // Verify before touching anything: an unreadable file must fail early.
+  const probe = new Database(source, { readonly: true, fileMustExist: true });
+  try {
+    const table = probe
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='attendance'")
+      .get();
+    if (!table) throw new Error('That file is not an attendance database.');
+  } finally {
+    probe.close();
+  }
+
+  const safety = await backupNow();
+  const target = paths.dbPath(appRef);
+
+  close();
+  for (const sidecar of ['-wal', '-shm']) {
+    try {
+      fs.unlinkSync(target + sidecar);
+    } catch {
+      /* absent is the normal case */
+    }
+  }
+  fs.copyFileSync(source, target);
+  connect(appRef, target);
+
+  return { restored: source, safetyCopy: safety };
 }
 
 module.exports = {
@@ -562,6 +641,8 @@ module.exports = {
   reasonStats,
   overallStats,
   backupNow,
-  backupIfStale,
+  backupIfDue,
+  listBackups,
+  restoreFromFile,
   exportDatabaseCopy,
 };

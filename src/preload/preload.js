@@ -59,6 +59,19 @@ contextBridge.exposeInMainWorld('api', {
     load: (start, end) => call('reports:load', start, end),
   },
 
+  settings: {
+    get: () => call('settings:get'),
+    set: (patch) => call('settings:set', patch),
+    chooseBackupDir: () => call('settings:chooseBackupDir'),
+    openPath: (which) => call('settings:openPath', which),
+  },
+
+  backups: {
+    list: () => call('backup:list'),
+    now: () => call('backup:now'),
+    restore: (file) => call('backup:restore', file),
+  },
+
   exports: {
     csv: (rows, name) => call('export:csv', rows, name),
     xlsx: (rows, name) => call('export:xlsx', rows, name),

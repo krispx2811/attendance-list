@@ -6,6 +6,7 @@ const { app, BrowserWindow, dialog, shell, nativeTheme } = require('electron');
 
 const paths = require('./paths');
 const db = require('./db');
+const settings = require('./settings');
 const registerIpc = require('./ipc');
 const { setupUpdater } = require('./updater');
 
@@ -74,34 +75,55 @@ function createWindow() {
   return mainWindow;
 }
 
-/** Move a database left by the Python build into the current data folder. */
-function adoptLegacyDatabase() {
+/**
+ * Carry an existing database into the current data folder.
+ *
+ * Versions up to 2.1.0 kept the database beside the .exe, which the Windows
+ * uninstaller deletes during an update. Anyone whose data is still there —
+ * or in the folder the Python build used — gets it moved somewhere safe the
+ * first time this version runs.
+ *
+ * The whole folder is copied, not just the .db, so the daily backups come
+ * along too. The original is left where it is: if anything about this goes
+ * wrong, the records are still in the old place.
+ */
+function adoptExistingData() {
   try {
     const target = paths.dbPath(app);
     if (fs.existsSync(target) || process.env[paths.ENV_DATA_DIR]) return;
 
-    const candidates = [
-      path.join(app.getPath('appData'), 'AttendanceList', 'attendance.db'),
-      path.join(app.getPath('home'), 'Library', 'Application Support', 'AttendanceList', 'attendance.db'),
-    ];
-    const legacy = candidates.find((p) => fs.existsSync(p));
-    if (!legacy) return;
+    for (const dir of paths.legacyDataDirs(app)) {
+      const candidate = fs.existsSync(path.join(dir, 'attendance.db'))
+        ? dir
+        : fs.existsSync(path.join(dir, 'data', 'attendance.db'))
+          ? path.join(dir, 'data')
+          : null;
+      if (!candidate) continue;
 
-    paths.ensureDirs(app);
-    fs.copyFileSync(legacy, target);
-    fs.renameSync(legacy, legacy + '.migrated');
-  } catch {
-    // Never let a migration problem stop the app from opening.
+      paths.ensureDirs(app);
+      fs.cpSync(candidate, path.dirname(target), { recursive: true, force: false });
+      log(`Adopted existing data from ${candidate}`);
+      return;
+    }
+  } catch (error) {
+    // Never let this stop the app opening: worst case it starts empty and
+    // the old folder is still there to restore from by hand.
+    log(`Could not adopt existing data: ${error.message}`);
   }
+}
+
+function log(message) {
+  if (!app.isPackaged) console.log(`[attendance] ${message}`);
 }
 
 app.whenReady().then(async () => {
   try {
     paths.ensureDirs(app);
-    adoptLegacyDatabase();
+    adoptExistingData();
     db.connect(app);
     db.seedDefaultPeople();
-    await db.backupIfStale();
+    nativeTheme.themeSource = settings.load(app).theme;
+    await db.backupIfDue();
   } catch (error) {
     dialog.showErrorBox(
       'Attendance List — could not open your data',

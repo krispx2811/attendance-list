@@ -1,6 +1,6 @@
 {
   "name": "attendance-list",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Daily attendance tracker — record who came, who didn't and why.",
   "main": "src/main/main.js",
   "author": "Kareem",
@@ -63,7 +63,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Al araimi"
+      "shortcutName": "Al araimi",
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": [

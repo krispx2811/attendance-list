@@ -8,11 +8,13 @@
  * than trusting the renderer.
  */
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { ipcMain, dialog, shell, nativeTheme } = require('electron');
 
 const db = require('./db');
 const paths = require('./paths');
+const settings = require('./settings');
 const exporter = require('./exporter');
 
 function registerIpc({ app, getWindow }) {
@@ -40,6 +42,7 @@ function registerIpc({ app, getWindow }) {
     usingFallback: paths.usingFallback(app),
     platform: process.platform,
     dark: nativeTheme.shouldUseDarkColors,
+    theme: settings.load(app).theme,
     today: db.todayStr(),
   }));
 
@@ -51,6 +54,7 @@ function registerIpc({ app, getWindow }) {
   handle('app:setTheme', (mode) => {
     if (!['system', 'light', 'dark'].includes(mode)) throw new Error('Unknown theme');
     nativeTheme.themeSource = mode;
+    settings.save({ theme: mode }, app);
     return nativeTheme.shouldUseDarkColors;
   });
 
@@ -162,7 +166,67 @@ function registerIpc({ app, getWindow }) {
     return target;
   });
 
+  // -- settings -----------------------------------------------------------
+  handle('settings:get', () => ({
+    values: settings.load(app),
+    defaults: settings.defaults(app),
+    dataDir: paths.dataDir(app),
+    dbFile: paths.dbPath(app),
+    settingsFile: settings.settingsFile(app),
+    portable: paths.isPortable(),
+    custom: paths.isCustom(),
+    usingFallback: paths.usingFallback(app),
+    frequencies: settings.BACKUP_FREQUENCIES,
+    keepRange: [settings.MIN_KEEP, settings.MAX_KEEP],
+  }));
+
+  handle('settings:set', (patch) => {
+    if (!patch || typeof patch !== 'object') throw new Error('Expected settings to change');
+    const saved = settings.save(patch, app);
+    if (patch.theme) nativeTheme.themeSource = saved.theme;
+    return saved;
+  });
+
+  handle('settings:chooseBackupDir', async () => {
+    const result = await dialog.showOpenDialog(win(), {
+      title: 'Where should backups be kept?',
+      defaultPath: settings.load(app).backupDir,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    return settings.save({ backupDir: result.filePaths[0] }, app);
+  });
+
+  handle('settings:openPath', (which) => {
+    const targets = {
+      data: paths.dataDir(app),
+      backups: settings.load(app).backupDir,
+    };
+    const target = targets[which];
+    if (!target) throw new Error('Unknown folder');
+    fs.mkdirSync(target, { recursive: true });
+    shell.openPath(target);
+    return target;
+  });
+
+  // -- backups ------------------------------------------------------------
   handle('backup:now', () => db.backupNow());
+  handle('backup:list', () => db.listBackups());
+
+  handle('backup:restore', async (file) => {
+    let source = file;
+    if (!source) {
+      const result = await dialog.showOpenDialog(win(), {
+        title: 'Restore from a backup',
+        defaultPath: settings.load(app).backupDir,
+        filters: [{ name: 'Attendance database', extensions: ['db'] }],
+        properties: ['openFile'],
+      });
+      if (result.canceled || !result.filePaths.length) return null;
+      source = result.filePaths[0];
+    }
+    return db.restoreFromFile(source);
+  });
 
   handle('shell:showItem', (filePath) => {
     shell.showItemInFolder(filePath);

@@ -457,6 +457,206 @@ function timeCell(stored) {
   return text ? esc(text) : '<span class="muted">—</span>';
 }
 
+
+/**
+ * A labelled block of related settings.
+ *
+ * Each row states what the setting does in plain words underneath its name,
+ * because a settings screen that assumes you already know what everything
+ * means is only useful to whoever wrote it.
+ */
+function settingsSection(title, description, rows) {
+  return `
+    <section class="settings-section">
+      <div class="settings-head">
+        <h2>${esc(title)}</h2>
+        ${description ? `<p>${esc(description)}</p>` : ''}
+      </div>
+      ${rows.join('')}
+    </section>`;
+}
+
+function settingsRow({ label, hint, control, wide = false }) {
+  return `
+    <div class="settings-row${wide ? ' is-wide' : ''}">
+      <div class="settings-label">
+        <div class="settings-name">${esc(label)}</div>
+        ${hint ? `<div class="settings-hint">${hint}</div>` : ''}
+      </div>
+      <div class="settings-control">${control}</div>
+    </div>`;
+}
+
+function pathBox(value) {
+  return `<code class="path-box" title="${esc(value)}">${esc(value)}</code>`;
+}
+
+const FREQUENCY_LABELS = {
+  launch: 'Every time the app opens',
+  daily: 'Once a day',
+  off: 'Never — I will do it myself',
+};
+
+function settingsView() {
+  return `
+    <section class="view">
+      <header class="topbar">
+        <div class="topbar-title">
+          <h1>Settings</h1>
+          <p id="settings-note"></p>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-default" data-act="backup-now">${icons.download} Back up now</button>
+        </div>
+      </header>
+      <div class="view-body" id="settings-body"></div>
+    </section>`;
+}
+
+/** Built after the settings load, since every control needs its value. */
+function settingsBody(info, backups) {
+  const v = info.values;
+  const [minKeep, maxKeep] = info.keepRange;
+
+  const backupSection = settingsSection(
+    'Backups',
+    'A backup is a complete copy of every record. Keeping them somewhere you ' +
+      'can see is the difference between a bad day and a lost year.',
+    [
+      settingsRow({
+        label: 'Where backups are kept',
+        hint: pathBox(v.backupDir),
+        control: `
+          <button class="btn btn-default btn-sm" data-act="choose-backup-dir">Change…</button>
+          <button class="btn btn-ghost btn-sm" data-act="open-backups">Open folder</button>`,
+        wide: true,
+      }),
+      settingsRow({
+        label: 'Back up automatically',
+        hint: 'Runs when the app starts. It takes a moment and never interrupts you.',
+        control: `
+          <select class="input" id="set-frequency">
+            ${info.frequencies
+              .map(
+                (f) =>
+                  `<option value="${f}"${f === v.backupFrequency ? ' selected' : ''}>${esc(
+                    FREQUENCY_LABELS[f] || f
+                  )}</option>`
+              )
+              .join('')}
+          </select>`,
+      }),
+      settingsRow({
+        label: 'How many to keep',
+        hint: `The oldest is deleted once there are more than this. Between ${minKeep} and ${maxKeep}.`,
+        control: `<input class="input input-num" id="set-keep" type="number"
+                         min="${minKeep}" max="${maxKeep}" value="${v.backupsToKeep}" />`,
+      }),
+    ]
+  );
+
+  const list = backups.length
+    ? `<div class="backup-list">${backups
+        .map(
+          (b) => `
+          <div class="backup-row" data-file="${esc(b.file)}">
+            <span class="backup-name">${esc(b.name)}</span>
+            <span class="backup-meta">${esc(b.taken.replace('T', ' '))} · ${Math.max(
+              1,
+              Math.round(b.size / 1024)
+            )} KB</span>
+            <button class="btn btn-ghost btn-sm" data-act="restore-backup">Restore</button>
+          </div>`
+        )
+        .join('')}</div>`
+    : `<p class="muted">No backups yet. Press <strong>Back up now</strong> to make the first one.</p>`;
+
+  const restoreSection = settingsSection(
+    'Restore',
+    'Restoring replaces everything currently in the app with the contents of ' +
+      'the backup. A copy of the current records is taken first, so a restore ' +
+      'can itself be undone.',
+    [`<div class="settings-block">${list}</div>`,
+     settingsRow({
+       label: 'Restore from a file somewhere else',
+       hint: 'For a backup you saved to a USB stick, or one sent to you.',
+       control: '<button class="btn btn-default btn-sm" data-act="restore-file">Choose a file…</button>',
+     })]
+  );
+
+  const dataSection = settingsSection(
+    'Where your data lives',
+    'One SQLite file holds every person and every record. Copy it and you have ' +
+      'copied everything.',
+    [
+      settingsRow({
+        label: 'Database folder',
+        hint: pathBox(info.dataDir),
+        control: `
+          <button class="btn btn-ghost btn-sm" data-act="open-data">Open folder</button>
+          <button class="btn btn-ghost btn-sm" data-act="save-copy">Save a copy…</button>`,
+        wide: true,
+      }),
+      info.portable
+        ? settingsRow({
+            label: 'Portable copy',
+            hint: 'This is the portable build, so your data sits beside the .exe. ' +
+                  'Move that folder and your records move with it.',
+            control: '<span class="tag">Portable</span>',
+          })
+        : '',
+      info.custom
+        ? settingsRow({
+            label: 'Set by ATTENDANCE_DATA_DIR',
+            hint: 'This PC is configured to keep its data in a specific folder — ' +
+                  'usually a shared one, so several machines see the same list.',
+            control: '<span class="tag">Custom</span>',
+          })
+        : '',
+      info.usingFallback
+        ? settingsRow({
+            label: 'Using a fallback location',
+            hint: 'The usual folder could not be written to, so the app chose ' +
+                  'another one. The path above is where your data actually is.',
+            control: '<span class="tag tag--warn">Heads up</span>',
+          })
+        : '',
+    ].filter(Boolean)
+  );
+
+  const appearanceSection = settingsSection('Appearance', '', [
+    settingsRow({
+      label: 'Theme',
+      hint: 'Auto follows whatever Windows is set to.',
+      control: `
+        <select class="input" id="set-theme">
+          <option value="system"${v.theme === 'system' ? ' selected' : ''}>Auto</option>
+          <option value="light"${v.theme === 'light' ? ' selected' : ''}>Light</option>
+          <option value="dark"${v.theme === 'dark' ? ' selected' : ''}>Dark</option>
+        </select>`,
+    }),
+  ]);
+
+  const updateSection = settingsSection('Updates', '', [
+    settingsRow({
+      label: 'Check for updates automatically',
+      hint: 'Looks once when the app opens. Nothing installs without you pressing Update.',
+      control: `<label class="switch">
+          <input type="checkbox" id="set-auto-update"${v.autoCheckUpdates ? ' checked' : ''} />
+          <span></span>
+        </label>`,
+    }),
+    settingsRow({
+      label: 'Version',
+      hint: 'Your data is never touched by an update.',
+      control: `<span class="muted" id="settings-version"></span>
+        <button class="btn btn-ghost btn-sm" data-act="check-updates">Check now</button>`,
+    }),
+  ]);
+
+  return backupSection + restoreSection + dataSection + appearanceSection + updateSection;
+}
+
 window.views = {
   STATUSES,
   TIME_STATUSES,
@@ -485,4 +685,6 @@ window.views = {
   peopleView,
   historyView,
   reportsView,
+  settingsView,
+  settingsBody,
 };

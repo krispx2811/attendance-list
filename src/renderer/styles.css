@@ -1545,3 +1545,194 @@ td.date {
     margin-left: 0;
   }
 }
+
+/* ==========================================================================
+   Settings
+   ========================================================================== */
+
+.settings-section {
+  max-width: 780px;
+  margin-bottom: 30px;
+}
+
+.settings-head {
+  margin-bottom: 12px;
+}
+
+.settings-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.settings-head p {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 62ch;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  margin-bottom: 8px;
+}
+
+/* A path needs the full width, so its controls drop underneath it. */
+.settings-row.is-wide {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.settings-label {
+  min-width: 0;
+}
+
+.settings-name {
+  font-size: 13.5px;
+  font-weight: 540;
+}
+
+.settings-hint {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-width: 58ch;
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-row.is-wide .settings-control {
+  justify-content: flex-start;
+}
+
+.settings-block {
+  margin-bottom: 8px;
+}
+
+.path-box {
+  display: block;
+  margin-top: 6px;
+  padding: 7px 10px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-xs);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow-x: auto;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.input-num {
+  width: 88px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Backup list */
+.backup-list {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.backup-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.backup-row:last-child {
+  border-bottom: none;
+}
+
+.backup-row:hover {
+  background: var(--surface-hover);
+}
+
+.backup-name {
+  font-size: 13px;
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tag--warn {
+  background: var(--late-soft);
+  color: var(--late);
+}
+
+/* Switch */
+.switch {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch span {
+  width: 38px;
+  height: 22px;
+  border-radius: var(--r-full);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+
+.switch span::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.16s var(--ease);
+}
+
+.switch input:checked + span {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch input:checked + span::after {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

@@ -22,6 +22,7 @@ const state = {
   showRemoved: false,
   history: [],
   reports: null,
+  settings: null,
   info: null,
   update: null,
 };
@@ -996,6 +997,128 @@ async function refreshReports() {
     : '<p class="muted">No reasons recorded yet.</p>';
 }
 
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+async function renderSettings() {
+  viewsEl.innerHTML = V.settingsView();
+  await refreshSettings();
+
+  const view = $('.view');
+
+  view.addEventListener('change', async (event) => {
+    const id = event.target.id;
+    if (id === 'set-frequency') return saveSetting({ backupFrequency: event.target.value });
+    if (id === 'set-theme') {
+      const dark = await guard(api.setTheme(event.target.value), 'Could not change the theme');
+      if (dark !== null) applyTheme(dark);
+      syncThemeSwitch(event.target.value);
+      return;
+    }
+    if (id === 'set-auto-update') return saveSetting({ autoCheckUpdates: event.target.checked });
+    if (id === 'set-keep') {
+      const saved = await saveSetting({ backupsToKeep: Number(event.target.value) });
+      // The main process clamps, so show what actually took effect.
+      if (saved) event.target.value = saved.backupsToKeep;
+    }
+  });
+
+  view.addEventListener('click', async (event) => {
+    const act = event.target.closest('[data-act]')?.dataset.act;
+    const rowEl = event.target.closest('.backup-row');
+
+    switch (act) {
+      case 'backup-now': {
+        const target = await guard(api.backups.now(), 'Backup failed');
+        if (!target) return;
+        await refreshSettings();
+        return toast('Backup saved.', {
+          action: { label: 'Show file', run: () => api.exports.reveal(target) },
+        });
+      }
+      case 'choose-backup-dir': {
+        const saved = await guard(api.settings.chooseBackupDir(), 'Could not change the folder');
+        if (!saved) return;
+        await refreshSettings();
+        return toast('Backups will be kept there from now on.');
+      }
+      case 'open-backups':
+        return guard(api.settings.openPath('backups'), 'Could not open the folder');
+      case 'open-data':
+        return guard(api.settings.openPath('data'), 'Could not open the folder');
+      case 'save-copy': {
+        const target = await guard(api.exports.database(), 'Could not save a copy');
+        if (target) {
+          toast('Copy saved.', {
+            action: { label: 'Show file', run: () => api.exports.reveal(target) },
+          });
+        }
+        return;
+      }
+      case 'restore-backup':
+        return confirmRestore(rowEl?.dataset.file, $('.backup-name', rowEl)?.textContent);
+      case 'restore-file':
+        return confirmRestore(null, 'the file you choose');
+      case 'check-updates':
+        toast('Checking for updates…');
+        return api.update.check();
+      default:
+        break;
+    }
+  });
+}
+
+async function refreshSettings() {
+  const info = await guard(api.settings.get(), 'Could not load settings');
+  if (!info) return;
+  const backups = (await guard(api.backups.list())) || [];
+
+  state.settings = info;
+  $('#settings-body').innerHTML = V.settingsBody(info, backups);
+  $('#settings-note').textContent = backups.length
+    ? `${backups.length} backup${backups.length === 1 ? '' : 's'} kept`
+    : 'No backups yet';
+
+  const version = $('#settings-version');
+  if (version) version.textContent = `v${state.info?.version || ''}`;
+}
+
+async function saveSetting(patch) {
+  const saved = await guard(api.settings.set(patch), 'Could not save that setting');
+  if (saved) state.settings = { ...state.settings, values: saved };
+  return saved;
+}
+
+/**
+ * Restoring overwrites everything, so it asks first and says plainly what it
+ * is about to replace — and that the current records are copied first.
+ */
+async function confirmRestore(file, label) {
+  const ok = await api.confirm({
+    title: 'Restore from a backup',
+    message: `Replace all current records with ${label || 'this backup'}?`,
+    detail:
+      'Everything currently in the app is replaced. A copy of the current ' +
+      'records is saved to your backups folder first, so this can be undone.',
+    confirmLabel: 'Restore',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const result = await guard(api.backups.restore(file || null), 'Restore failed');
+  if (!result) return;
+
+  await refreshSettings();
+  toast('Restored. Your previous records were saved as a backup first.');
+}
+
+/** Keep the sidebar theme buttons in step with the Settings dropdown. */
+function syncThemeSwitch(mode) {
+  $$('#theme-switch button').forEach((b) => b.classList.toggle('is-active', b.dataset.theme === mode));
+}
+
 // ---------------------------------------------------------------------------
 // routing / boot
 // ---------------------------------------------------------------------------
@@ -1005,6 +1128,7 @@ const renderers = {
   people: renderPeople,
   history: renderHistory,
   reports: renderReports,
+  settings: renderSettings,
 };
 
 async function go(view) {
@@ -1026,9 +1150,11 @@ function wireChrome() {
   $('#theme-switch').addEventListener('click', async (event) => {
     const btn = event.target.closest('button');
     if (!btn) return;
-    $$('#theme-switch button').forEach((b) => b.classList.toggle('is-active', b === btn));
+    syncThemeSwitch(btn.dataset.theme);
     const dark = await api.setTheme(btn.dataset.theme);
     applyTheme(dark);
+    const select = $('#set-theme');
+    if (select) select.value = btn.dataset.theme;
   });
 
   $('#open-folder').addEventListener('click', () => api.openDataFolder());
@@ -1093,6 +1219,7 @@ async function boot() {
   state.info = await api.info();
   state.day = state.info.today;
   applyTheme(state.info.dark);
+  syncThemeSwitch(state.info.theme || 'system');
 
   $('#version-label').textContent = `v${state.info.version}`;
 

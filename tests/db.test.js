@@ -21,6 +21,7 @@ function withDb(fn) {
     }
     const paths = require(path.join(ROOT, 'src/main/paths'));
     paths._reset();
+    require(path.join(ROOT, 'src/main/settings'))._reset();
     const db = require(path.join(ROOT, 'src/main/db'));
     db.connect(null);
 
@@ -693,32 +694,206 @@ test('the full report has three sheets', withDb(async (db, { dir }) => {
   assert.deepEqual(wb.worksheets.map((s) => s.name), ['Records', 'Summary', 'Reasons']);
 }));
 
+
+// ---------------------------------------------------------------------------
+// settings and backups
+// ---------------------------------------------------------------------------
+
+test('settings start at their defaults and survive a round trip', withDb((db, { dir }) => {
+  const settings = require(path.join(ROOT, 'src/main/settings'));
+
+  const initial = settings.load(null);
+  assert.equal(initial.backupFrequency, 'daily');
+  assert.equal(initial.backupsToKeep, 14);
+  assert.equal(initial.theme, 'system');
+
+  settings.save({ backupsToKeep: 30, backupFrequency: 'launch' }, null);
+  settings._reset();
+
+  const reloaded = settings.load(null);
+  assert.equal(reloaded.backupsToKeep, 30);
+  assert.equal(reloaded.backupFrequency, 'launch');
+  assert.ok(fs.existsSync(path.join(dir, 'settings.json')));
+}));
+
+test('a nonsensical setting is clamped, not obeyed', withDb((db) => {
+  const settings = require(path.join(ROOT, 'src/main/settings'));
+
+  assert.equal(settings.save({ backupsToKeep: 0 }, null).backupsToKeep, settings.MIN_KEEP);
+  assert.equal(settings.save({ backupsToKeep: 99999 }, null).backupsToKeep, settings.MAX_KEEP);
+  assert.equal(settings.save({ backupFrequency: 'hourly' }, null).backupFrequency, 'daily');
+  assert.equal(settings.save({ backupDir: '   ' }, null).backupDir.length > 0, true);
+}));
+
+test('a corrupt settings file falls back to defaults', withDb((db, { dir }) => {
+  const settings = require(path.join(ROOT, 'src/main/settings'));
+  fs.writeFileSync(path.join(dir, 'settings.json'), '{ not json at all', 'utf8');
+  settings._reset();
+  assert.equal(settings.load(null).backupsToKeep, 14, 'the app must still open');
+}));
+
+test('backups go where the settings say, and are listed newest first',
+  withDb(async (db, { dir }) => {
+    const settings = require(path.join(ROOT, 'src/main/settings'));
+    const target = path.join(dir, 'my-backups');
+    settings.save({ backupDir: target }, null);
+
+    const id = db.addPerson('Backup Person');
+    db.mark(id, '2026-08-03', 'Present');
+
+    const first = await db.backupNow();
+    assert.ok(first.startsWith(target), 'the configured folder must be used');
+
+    const second = await db.backupNow();
+    assert.notEqual(first, second, 'a second backup the same day must not overwrite the first');
+
+    const listed = db.listBackups();
+    assert.equal(listed.length, 2);
+    assert.ok(listed.every((b) => b.size > 0));
+  }));
+
+test('only the configured number of backups is kept', withDb(async (db, { dir }) => {
+  const settings = require(path.join(ROOT, 'src/main/settings'));
+  settings.save({ backupDir: path.join(dir, 'few'), backupsToKeep: 2 }, null);
+
+  db.addPerson('Someone');
+  for (let i = 0; i < 4; i += 1) await db.backupNow();
+
+  assert.equal(db.listBackups().length, 2, 'the oldest are pruned');
+}));
+
+test('backupIfDue honours the frequency setting', withDb(async (db, { dir }) => {
+  const settings = require(path.join(ROOT, 'src/main/settings'));
+  settings.save({ backupDir: path.join(dir, 'auto'), backupFrequency: 'off' }, null);
+  db.addPerson('Someone');
+
+  assert.equal(await db.backupIfDue(), null, 'off means off');
+
+  settings.save({ backupFrequency: 'daily' }, null);
+  assert.ok(await db.backupIfDue(), 'the first run of the day backs up');
+  assert.equal(await db.backupIfDue(), null, 'the second run of the day does not');
+
+  settings.save({ backupFrequency: 'launch' }, null);
+  assert.ok(await db.backupIfDue(), 'every launch backs up');
+}));
+
+test('restoring brings back the records, keeping a copy of the current ones',
+  withDb(async (db, { dir }) => {
+    const settings = require(path.join(ROOT, 'src/main/settings'));
+    settings.save({ backupDir: path.join(dir, 'restore-test') }, null);
+
+    const id = db.addPerson('Original');
+    db.mark(id, '2026-08-03', 'Present');
+    db.setTimes(id, '2026-08-03', { time_in: '08:00', time_out: '17:00' });
+    const backup = await db.backupNow();
+
+    // Now wreck it the way a bad day does.
+    db.deletePerson(id);
+    db.addPerson('Someone Else');
+    assert.equal(db.search().length, 0);
+
+    const result = await db.restoreFromFile(backup);
+
+    const rows = db.search();
+    assert.equal(rows.length, 1, 'the old record is back');
+    assert.equal(rows[0].name, 'Original');
+    assert.equal(rows[0].time_in, '08:00', 'times come back too');
+    assert.ok(fs.existsSync(result.safetyCopy), 'the wrecked state was saved before overwriting');
+  }));
+
+test('restoring refuses a file that is not an attendance database',
+  withDb(async (db, { dir }) => {
+    const notADb = path.join(dir, 'holiday-photo.db');
+    fs.writeFileSync(notADb, 'this is not a database');
+
+    await assert.rejects(() => db.restoreFromFile(notADb));
+    await assert.rejects(() => db.restoreFromFile(path.join(dir, 'nothing-here.db')),
+      /no longer exists/i);
+  }));
+
 // ---------------------------------------------------------------------------
 // paths
 // ---------------------------------------------------------------------------
 
-test('the data folder sits beside the app, and falls back when read-only', () => {
+test('the data folder sits in application data, away from the installer', () => {
+  delete process.env.ATTENDANCE_DATA_DIR;
+  delete process.env.PORTABLE_EXECUTABLE_DIR;
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(path.join(ROOT, 'src'))) delete require.cache[key];
+  }
+  const paths = require(path.join(ROOT, 'src/main/paths'));
+
+  // The install folder is exactly where data must NOT live: the Windows
+  // uninstaller deletes it wholesale during an update.
+  paths._reset();
+  const beside = path.join(paths.appDir(null), 'data');
+  assert.notEqual(paths.dataDir(null), beside);
+  assert.equal(paths.dataDir(null), path.join(paths.userDataDir(null), 'data'));
+  assert.equal(paths.usingFallback(null), false);
+  assert.equal(paths.isPortable(), false);
+});
+
+test('the portable build keeps its data beside the executable', () => {
   delete process.env.ATTENDANCE_DATA_DIR;
   for (const key of Object.keys(require.cache)) {
     if (key.startsWith(path.join(ROOT, 'src'))) delete require.cache[key];
   }
   const paths = require(path.join(ROOT, 'src/main/paths'));
 
-  paths._reset();
-  assert.equal(paths.dataDir(null), path.join(paths.appDir(null), 'data'));
-  assert.equal(paths.usingFallback(null), false);
+  const portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'attendance-portable-'));
+  process.env.PORTABLE_EXECUTABLE_DIR = portableRoot;
+  try {
+    paths._reset();
+    assert.equal(paths.isPortable(), true);
+    assert.equal(paths.dataDir(null), path.join(portableRoot, 'data'),
+      'moving the folder must move the records with it');
+    assert.equal(paths.usingFallback(null), false);
+  } finally {
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
+    fs.rmSync(portableRoot, { recursive: true, force: true });
+    paths._reset();
+  }
+});
+
+test('an unwritable application data folder falls back rather than failing', () => {
+  delete process.env.ATTENDANCE_DATA_DIR;
+  delete process.env.PORTABLE_EXECUTABLE_DIR;
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(path.join(ROOT, 'src'))) delete require.cache[key];
+  }
+  const paths = require(path.join(ROOT, 'src/main/paths'));
 
   paths._reset();
-  const readOnly = { getPath: () => path.join(os.tmpdir(), 'attendance-fallback') };
+  const preferred = path.join(paths.userDataDir(null), 'data');
   const original = fs.mkdirSync;
   fs.mkdirSync = (dir, ...rest) => {
-    if (String(dir).endsWith(path.join('', 'data'))) throw new Error('read-only');
+    if (path.resolve(String(dir)) === path.resolve(preferred)) throw new Error('read-only');
     return original(dir, ...rest);
   };
   try {
-    assert.ok(paths.dataDir(readOnly).includes('attendance-fallback'));
+    assert.equal(paths.dataDir(null), path.join(paths.appDir(null), 'data'));
+    assert.equal(paths.usingFallback(null), true, 'and it says so, so the UI can warn');
   } finally {
     fs.mkdirSync = original;
+    paths._reset();
+  }
+});
+
+test('the environment override still wins over everything', () => {
+  for (const key of Object.keys(require.cache)) {
+    if (key.startsWith(path.join(ROOT, 'src'))) delete require.cache[key];
+  }
+  const paths = require(path.join(ROOT, 'src/main/paths'));
+
+  process.env.ATTENDANCE_DATA_DIR = path.join(os.tmpdir(), 'attendance-shared');
+  process.env.PORTABLE_EXECUTABLE_DIR = os.tmpdir();
+  try {
+    paths._reset();
+    assert.equal(paths.dataDir(null), path.join(os.tmpdir(), 'attendance-shared'),
+      'a shared network folder must beat every default');
+  } finally {
+    delete process.env.ATTENDANCE_DATA_DIR;
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
     paths._reset();
   }
 });

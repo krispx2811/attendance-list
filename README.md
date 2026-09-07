@@ -101,26 +101,43 @@ for absence, and:
 - **Full report** — one workbook with three sheets: Records, Summary, Reasons.
 - **Back up now** and **Save a copy** for keeping a copy elsewhere.
 
+### Settings
+Everything about where your data goes, and how often it is copied.
+
+- **Backups** — where they are kept (Documents by default), how often one is
+  taken, and how many to keep. **Back up now** makes one immediately.
+- **Restore** — every backup is listed with its date; one click puts it back.
+  A copy of the current records is taken first, so a restore can be undone.
+- **Where your data lives** — the exact folder, with a button to open it.
+- **Appearance** and **Updates**.
+
 ## Where your data is kept
 
-In a `data` folder next to the app:
-
 ```
-AttendanceList.exe
-data\
-    attendance.db      all attendance records
-    backups\           automatic daily backups (last 14 kept)
+%APPDATA%\attendance-list\data\attendance.db     all attendance records
+Documents\Attendance List\Backups\               automatic backups
 ```
 
-Updating never touches that folder. Data never leaves the computer — the app
-contacts GitHub only to check for a new version.
+Both paths are shown in **Settings**, with a button to open either one.
 
-**To move everything to another computer**, copy the whole folder.
+> **Versions up to 2.1.0 kept the database inside the installation folder,
+> which the Windows uninstaller deletes during an update — so updating
+> destroyed the history.** That is fixed in 2.2.0: application data survives an
+> update by design, and the installer moves any data left in the old location
+> before the old version is removed. Nothing is required of you.
 
-> If the app sits somewhere Windows will not let it write — `C:\Program Files`,
-> a locked-down share — it falls back to your user profile automatically rather
-> than failing. The installer handles this for you; it only matters for the
-> portable version.
+Data never leaves the computer — the app contacts GitHub only to check for a
+new version.
+
+**To move everything to another computer**, copy the `data` folder from the
+path shown in Settings, or use **Settings → Save a copy** and restore it on the
+other machine.
+
+**The portable version is different**: it keeps its data in a `data` folder
+beside the .exe, so the whole folder travels together on a USB stick.
+
+> If the usual folder cannot be written to, the app falls back to another one
+> rather than failing, and says so in Settings.
 
 **To share one list across several PCs**, set the environment variable
 `ATTENDANCE_DATA_DIR` to a shared network folder on each machine. Best with one
@@ -170,6 +187,8 @@ ATTENDANCE_DATA_DIR=/tmp/attendance-dev npm start
 | `src/main/updater.js` | GitHub release checks via electron-updater |
 | `src/main/ipc.js` | The only channels the UI can call |
 | `src/main/paths.js` | Where the database and backups live |
+| `src/main/settings.js` | User settings, stored beside the database |
+| `build/installer.nsh` | Stops the Windows uninstaller deleting your data |
 | `src/shared/clock.js` | Times of day: parsing, display, hours worked — used by both sides |
 | `src/preload/preload.js` | The renderer's entire view of the outside world |
 | `src/renderer/` | The interface: `styles.css` is the design system |
